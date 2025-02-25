@@ -1,15 +1,11 @@
 
 
+## Areas of research
 
-
-## Ideas of model
-
-- DropGNN
-- GraphSAGE
-- GraphSAINT
 - GraphVAE
-- GIN
+- DGMG (https://arxiv.org/pdf/1803.03324)
+- GraphUNet with upsampling
 
 ## Improvements
 - Data Augmentation
-- Add losses, sublosses (new interesting losses )
+- Losses : Add intermediate losses or geometrical losses

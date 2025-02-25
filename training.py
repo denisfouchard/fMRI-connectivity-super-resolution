@@ -74,7 +74,7 @@ def train_model(
 
             # Forward pass on training data
             outputs = model(inputs)
-            loss = criterion(outputs, targets)
+            loss = criterion(outputs, targets.to(model.device))
             loss.backward()
 
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -94,7 +94,7 @@ def train_model(
                 inputs, targets = batch
                 outputs = model(inputs)
 
-                val_loss += criterion(targets, outputs).item()
+                val_loss += criterion(outputs, targets.to(model.device)).item()
 
             val_loss /= len(val_dataloader)
             val_loss_history.append(val_loss)
@@ -140,7 +140,7 @@ def evaluate_model(model, dataloader, criterion):
         inputs, targets = batch
         outputs = model(inputs)
 
-        val_loss += criterion(targets, outputs).item()
+        val_loss += criterion(outputs.to(model.device)).item()
         batch_metrics = evaluation_metrics(
             outputs.detach().numpy(), targets.detach().numpy()
         )

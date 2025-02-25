@@ -1,0 +1,252 @@
+\documentclass[conference]{IEEEtran}
+\usepackage{xcolor}
+\usepackage{tcolorbox}
+\usepackage{graphicx}
+\usepackage{fancyhdr} % Added for page numbering
+\usepackage[colorlinks=true, linkcolor=blue, urlcolor=cyan, citecolor=cyan]{hyperref} % Added for colored 
+\usepackage{enumitem} 
+\usepackage{soul} 
+
+
+\definecolor{deeppink}{rgb}{1.0, 0.08, 0.58}
+\definecolor{awesome}{rgb}{1.0, 0.13, 0.32}
+\definecolor{blue-green}{rgb}{0.0, 0.87, 0.87}
+\definecolor{deeplilac}{rgb}{0.6, 0.33, 0.73}  
+\definecolor{lightcarminepink}{rgb}{0.9, 0.4, 0.38}
+\definecolor{ix}{rgb}{0.89, 0.15, 0.42}
+\definecolor{parisgreen}{rgb}{0.31, 0.78, 0.47}
+\definecolor{mauve}{rgb}{0.88, 0.69, 1.0}
+\definecolor{lightpastelpurple}{rgb}{0.69, 0.61, 0.85}
+\definecolor{ashgrey}{rgb}{0.7, 0.75, 0.71}
+    
+\title{DGL-25 Kaggle Competition: \emph{\textcolor{blue-green}{Your Team Name}, \textcolor{mauve}{Final Rank}}}
+\author{\IEEEauthorblockN{Your Name 1, Student CID 1, Username 1} \\
+\IEEEauthorblockN{Your Name 2, Student CID 2, Username 2} \\
+\IEEEauthorblockN{Your Name 3, Student CID 3, Username 3} \\
+\IEEEauthorblockN{Your Name 4, Student CID 4, Username 4} \\
+\IEEEauthorblockN{Your Name 5, Student CID 5, Username 5} \\
+} 
+
+\begin{document}
+
+\maketitle
+
+
+%This report is worth \textcolor{deeppink}{75 points} of the total mark of the DGL projet.
+
+\textbf{\textcolor{deeppink}{Important note:}} Remove all \textcolor{ashgrey}{Todo} markers and enter your responses. Do not remove the \textcolor{blue}{(points)} specifications for each question or sub-question.
+ 
+%%%%%%%% ======= %%%%%%%% ======= %%%%%%%% ======= %%%%%%%% ======= %%%%%%%%
+\section{Methodology \& Novelty \textcolor{blue}{(40 points)}}
+%%%%%%%% ======= %%%%%%%% ======= %%%%%%%% ======= %%%%%%%% ======= %%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Problem description \& motivation \textcolor{blue}{(5 points)}}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\textcolor{ashgrey}{Todo}.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{State-of-the art methods \textcolor{blue}{(3 points)}}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\textcolor{ashgrey}{Todo}.
+
+\begin{table}[ht]
+\renewcommand{\arraystretch}{1.3}
+\centering
+\caption{Overview of GNN-based SOTA Models}
+\begin{tabular}{|p{2cm}|p{6cm}|}
+\hline
+\textbf{Model Name} & \textbf{Brief Description} \\
+\hline
+GraphSAGE \cite{graphsage} & Refines GCN by employing neighborhood sampling and aggregation techniques to efficiently learn node embeddings in large graphs. \\
+\hline
+
+Name \cite{} & Describe. \\
+\hline
+
+%Graph Attention Network (GAT) & Incorporates attention mechanisms to assign different importance levels to neighboring nodes. \\
+%\hline
+
+\end{tabular}
+\label{tab:gnn_models}
+\end{table}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Main figure \textcolor{blue}{(4 points)}}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\textcolor{ashgrey}{Todo}.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Brief overview of the proposed GNN \textcolor{blue}{(5 points)}}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\textcolor{ashgrey}{Todo}.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Innovative components \textcolor{blue}{(10 points)}}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\textcolor{ashgrey}{Todo}.
+
+\begin{table}[ht!]
+\renewcommand{\arraystretch}{1.3}
+\centering
+\caption{Innovative Components of the Proposed GNN Framework}
+\begin{tabular}{|p{3cm}|p{5cm}|}
+\hline
+\textbf{Novel Contribution} & \textbf{Rationale} \\
+\hline
+Contribution 1 & Justify the rationale behind this contribution. \\
+\hline
+Contribution 2 & Justify the rationale behind this contribution. \\
+\hline
+\end{tabular}
+\label{tab:contributions}
+\end{table}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Mathematical properties of the proposed GNN \textcolor{blue}{(13 points)}}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\textcolor{ashgrey}{Todo}.
+
+\begin{tcolorbox}[colframe=pink, colback=pink!20, title=Permutation invariance \textcolor{blue}{(5 points)}, height=4cm]
+\begin{enumerate}[label=\alph*)]
+\item \textcolor{ashgrey}{Todo}. \textcolor{blue}{(1 point)}
+\item \textcolor{ashgrey}{Todo}. \textcolor{blue}{(4 points)}
+\end{enumerate} 
+ 
+\end{tcolorbox}
+
+%\vspace{0.4cm}
+
+\begin{tcolorbox}[colframe=lightcarminepink, colback=lightcarminepink!5, title=Permutation equivariance \textcolor{blue}{(5 points)}, height=4cm]
+%[colframe=red, colback=red!10, title=Challenges or Research Questions, height=4cm]
+\begin{enumerate}[label=\alph*)]
+\item \textcolor{ashgrey}{Todo}. \textcolor{blue}{(1 point)}
+\item \textcolor{ashgrey}{Todo}. \textcolor{blue}{(4 points)}
+\end{enumerate}
+
+\end{tcolorbox}
+
+
+\begin{tcolorbox}[colframe=ix, colback=ix!5, title=Expressiveness \textcolor{blue}{(3 points)}, height=4cm]
+\begin{enumerate}[label=\alph*)]
+\item \textcolor{ashgrey}{Todo}. \textcolor{blue}{(1 point)}
+\item \textcolor{ashgrey}{Todo}. \textcolor{blue}{(2 points)}
+\end{enumerate}
+\end{tcolorbox}
+
+
+\vspace{1cm}
+
+%%%%%%%% ======= %%%%%%%% ======= %%%%%%%% ======= %%%%%%%% ======= %%%%%%%%
+\section{Experimental Setup \& Evaluation \textcolor{blue}{(27 points)}}
+%%%%%%%% ======= %%%%%%%% ======= %%%%%%%% ======= %%%%%%%% ======= %%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Results \textcolor{blue}{(9 points)}}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{enumerate}[label=\alph*)]
+    \item \textcolor{ashgrey}{Todo}. \textcolor{blue}{(2 points)}
+    
+    \item \textcolor{ashgrey}{Todo}. \textcolor{blue}{(4 points)}
+    
+    \item \textcolor{ashgrey}{Todo}. \textcolor{blue}{(2 points)}
+    
+    \item \textcolor{ashgrey}{Todo}. \textcolor{blue}{(1 point)}
+\end{enumerate}
+
+\begin{table}[ht!]
+\renewcommand{\arraystretch}{1.3}
+\centering
+\caption{Additional Topological/Geometric Measures}
+\begin{tabular}{|p{3cm}|p{4cm}|}
+\hline
+\textbf{Measure Name} & \textbf{Brief Description \& Rationale} \\
+\hline
+Measure 1 & Describe and justify. \\
+\hline
+Measure 2 & Describe and justify. \\
+\hline
+\end{tabular}
+\label{tab:2Measures}
+\end{table}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Comparison Against Other Methods \textcolor{blue}{(6 points)}}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\textcolor{ashgrey}{Todo}.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Scalability of Your Proposed GNN Model \textcolor{blue}{(7 points)}}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\textcolor{ashgrey}{Todo}.
+
+%\begin{enumerate}[label=\alph*)]
+   % \item How does your model's performance change as dataset size increases? % Provide empirical evidence or theoretical reasoning.
+ %   \item Discuss memory and computational overhead. How does your architecture handle large-scale graphs? Does it require significant resources, or is it optimized for efficiency? Justify your reasoning.
+  %  \item Suggest potential improvements to enhance scalability further.
+%\end{enumerate}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Reproducibility of Your Proposed GNN Model \textcolor{blue}{(5 points)}}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\textcolor{ashgrey}{Todo}.
+
+
+%%%%%%%% ======= %%%%%%%% ======= %%%%%%%% ======= %%%%%%%% ======= %%%%%%%%
+\section{Discussion \& Reflections \textcolor{blue}{(8 points)}}
+%%%%%%%% ======= %%%%%%%% ======= %%%%%%%% ======= %%%%%%%% ======= %%%%%%%%
+
+\begin{enumerate}[label=\alph*)]
+\item \textcolor{ashgrey}{Todo}. \textcolor{blue}{(4 points)}
+
+\begin{table}[ht!]
+\renewcommand{\arraystretch}{1.3}
+\centering
+\caption{Strengths \& Weaknesses of the Proposed GNN}
+\begin{tabular}{|p{2.8cm}|p{5cm}|}
+\hline
+Strength 1 & Provide an example. \\
+\hline
+Strength 2 & Provide an example. \\
+\hline
+Weakness 1 & Provide an example. \\
+\hline
+Weakness 2 & Provide an example. \\
+\hline
+\end{tabular}
+\label{tab:reflections}
+\end{table}
+
+\item \textcolor{ashgrey}{Todo}. \textcolor{blue}{(4 points)}
+
+\end{enumerate}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\thispagestyle{fancy} % Custom page style for page numbering
+\fancyhf{} % Clear all headers and footers
+\fancyfoot[C]{\thepage} % Center the page number in the footer
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

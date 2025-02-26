@@ -1,20 +1,36 @@
-from typing import Callable, List, Union
+# putting it all together - code taken from https://github.com/HongyangGao/Graph-U-Nets/tree/master
 
 import torch
 from torch import Tensor
 import torch.nn.functional as F
 import torch.nn as nn
-from torch_geometric.nn import GCNConv, TopKPooling
-from torch_geometric.nn.resolver import activation_resolver
-from torch_geometric.typing import OptTensor, PairTensor
-from torch_geometric.utils import (
-    add_self_loops,
-    remove_self_loops,
-    to_torch_csr_tensor,
-)
-from torch_geometric.utils.repeat import repeat
+import torch
+import torch.nn as nn
+import numpy as np
 
-from torch_geometric.utils import dense_to_sparse, to_dense_adj
+
+def reconstruct_adjacency(X, threshold=0.15):
+    """
+    Reconstruct adjacency from node embeddings while preserving fMRI-like structure.
+
+    Args:
+        X (torch.Tensor): Node embeddings of shape [num_nodes, hidden_dim]
+        threshold (float): Value below which edges are removed for sparsity
+
+    Returns:
+        adj (torch.Tensor): Reconstructed weighted adjacency matrix
+    """
+    # Normalize embeddings to unit length (cosine similarity instead of raw dot product)
+    X_norm = F.normalize(X, p=2, dim=1)  # [num_nodes, hidden_dim]
+    # Compute cosine similarity matrix
+    adj = X_norm @ X_norm.T  # Values in range [-1, 1]
+
+    # adj = torch.sigmoid(adj)
+
+    # Apply sparsification: Keep only values above threshold
+    adj = torch.where(adj > threshold, adj, torch.zeros_like(adj))
+
+    return adj
 
 
 class GraphUpsampler(nn.Module):
@@ -24,6 +40,8 @@ class GraphUpsampler(nn.Module):
         hidden_dim,
         n_nodes,
         m_nodes,
+        act,
+        drop_p,
         num_iterations=3,
     ):
         """
@@ -39,11 +57,11 @@ class GraphUpsampler(nn.Module):
         self.m_nodes = m_nodes
 
         # Message passing layers
-        self.conv1 = GCNConv(in_dim, hidden_dim)
-        self.conv2 = GCNConv(hidden_dim, hidden_dim)
+        self.conv1 = GCN(in_dim, hidden_dim, act, drop_p)
+        self.conv2 = GCN(hidden_dim, hidden_dim, act, drop_p)
 
         # MLP for new node generation
-        self.upsample_mlp = nn.Linear(n_nodes, m_nodes)
+        self.upsample_mlp = nn.Linear(n_nodes, m_nodes - n_nodes)
 
     def forward(self, X, A):
         """
@@ -57,197 +75,169 @@ class GraphUpsampler(nn.Module):
         """
 
         # Generate new nodes by transforming existing ones
-        new_nodes = self.upsample_mlp(X.T).T  # [num_nodes, in_dim]
-
+        new_nodes = torch.sigmoid(self.upsample_mlp(X.T).T)  # [num_nodes, in_dim]
         # Concatenate old and new nodes
         X_upsampled = torch.cat([X, new_nodes], dim=0)
 
-        # Expand adjacency matrix (initialize new connections)
-        A_upsampled = torch.zeros(self.m_nodes, self.m_nodes, device=X.device)
-        A_upsampled[: self.n_nodes, : self.n_nodes] = A  # Copy old structure
+        A_upsampled = reconstruct_adjacency(X=X_upsampled)
 
-        # Connect new nodes to their source nodes
-        A_upsampled[self.n_nodes :, : self.n_nodes] = A  # Link new nodes to originals
-        A_upsampled[: self.n_nodes, self.n_nodes :] = A.T  # Symmetrize
-        A_upsampled[self.n_nodes :, self.n_nodes :] = torch.sigmoid(
-            torch.matmul(new_nodes, new_nodes.T)
-        )  # Self-connections
-
-        # Convert to edge list
-        edge_index, edge_weight = dense_to_sparse(A_upsampled)
+        # print("Mean : ", A_upsampled.mean().item(), "Std :", A_upsampled.std().item())
 
         # Message passing to refine embeddings
         for _ in range(self.num_iterations):
-            X_upsampled = self.conv1(X_upsampled, edge_index, edge_weight)
+            X_upsampled = self.conv1(A_upsampled, X_upsampled)
             X_upsampled = F.relu(X_upsampled)
-            A = torch.sigmoid(X_upsampled @ X_upsampled.T)
-            edge_index, edge_weight = dense_to_sparse(A)
+            A_upsampled = reconstruct_adjacency(X_upsampled)
 
-            X_upsampled = self.conv2(X_upsampled, edge_index, edge_weight)
+            X_upsampled = self.conv2(A_upsampled, X_upsampled)
             X_upsampled = F.relu(X_upsampled)
 
             # Reconstruct adjacency with updated embeddings
-            A_upsampled = torch.sigmoid(torch.matmul(X_upsampled, X_upsampled.T))
+            A_upsampled = reconstruct_adjacency(A_upsampled)
 
         return A_upsampled
 
 
-class GraphUNet(torch.nn.Module):
-    r"""The Graph U-Net model from the `"Graph U-Nets"
-    <https://arxiv.org/abs/1905.05178>`_ paper which implements a U-Net like
-    architecture with graph pooling and unpooling operations.
+class GraphUnet(nn.Module):
 
-    Args:
-        in_channels (int): Size of each input sample.
-        hidden_channels (int): Size of each hidden sample.
-        out_channels (int): Size of each output sample.
-        depth (int): The depth of the U-Net architecture.
-        pool_ratios (float or [float], optional): Graph pooling ratio for each
-            depth. (default: :obj:`0.5`)
-        sum_res (bool, optional): If set to :obj:`False`, will use
-            concatenation for integration of skip connections instead
-            summation. (default: :obj:`True`)
-        act (torch.nn.functional, optional): The nonlinearity to use.
-            (default: :obj:`torch.nn.functional.relu`)
-    """
-
-    def __init__(
-        self,
-        in_channels: int,
-        hidden_channels: int,
-        out_channels: int,
-        in_size: int,
-        out_size: int,
-        depth: int,
-        pool_ratios: Union[float, List[float]] = 0.5,
-        sum_res: bool = True,
-        act: Union[str, Callable] = "relu",
-        init_features: str = "ones",
-    ):
-        super().__init__()
-        assert depth >= 1
-        self.in_channels = in_channels
-        self.hidden_channels = hidden_channels
-        self.out_channels = out_channels
-        self.depth = depth
-        self.pool_ratios = repeat(pool_ratios, depth)
-        self.act = activation_resolver(act)
-        self.sum_res = sum_res
-        self.init_features = init_features
-        channels = hidden_channels
-
-        self.down_convs = torch.nn.ModuleList()
-        self.pools = torch.nn.ModuleList()
-        self.down_convs.append(GCNConv(in_channels, channels, improved=True))
-        for i in range(depth):
-            self.pools.append(TopKPooling(channels, self.pool_ratios[i]))
-            self.down_convs.append(GCNConv(channels, channels, improved=True))
-
-        in_channels = channels if sum_res else 2 * channels
-
-        self.up_convs = torch.nn.ModuleList()
-        for i in range(depth - 1):
-            self.up_convs.append(GCNConv(in_channels, channels, improved=True))
-        self.up_convs.append(GCNConv(in_channels, out_channels, improved=True))
-
+    def __init__(self, ks, n_nodes, m_nodes, dim, act, drop_p):
+        super(GraphUnet, self).__init__()
+        self.ks = ks
+        self.dim = dim
+        self.bottom_gcn = GCN(dim, dim, act, drop_p)
+        self.down_gcns = nn.ModuleList()
+        self.up_gcns = nn.ModuleList()
+        self.pools = nn.ModuleList()
+        self.unpools = nn.ModuleList()
         self.upsampler = GraphUpsampler(
-            in_dim=hidden_channels,
-            hidden_dim=hidden_channels,
-            n_nodes=in_size,
-            m_nodes=out_size,
+            in_dim=dim,
+            hidden_dim=dim,
+            n_nodes=n_nodes,
+            m_nodes=m_nodes,
+            act=act,
+            drop_p=drop_p,
         )
-        self.reset_parameters()
+        self.l_n = len(ks)
+        for i in range(self.l_n):
+            self.down_gcns.append(GCN(dim, dim, act, drop_p))
+            self.up_gcns.append(GCN(dim, dim, act, drop_p))
+            self.pools.append(Pool(ks[i], dim, drop_p))
+            self.unpools.append(Unpool(dim, dim, drop_p))
+
+        self.node_features = nn.Parameter(torch.randn(n_nodes, dim))
 
     @property
     def device(self):
         return next(self.parameters()).device
 
-    def reset_parameters(self):
-        r"""Resets all learnable parameters of the module."""
-        for conv in self.down_convs:
-            conv.reset_parameters()
-        for pool in self.pools:
-            pool.reset_parameters()
-        for conv in self.up_convs:
-            conv.reset_parameters()
-
-    def forward(
-        self,
-        A: Tensor,
-        batch: OptTensor = None,
-    ) -> Tensor:
-        """"""  # noqa: D419
+    def forward(self, A: torch.Tensor):
+        # Process A
         A = A.squeeze(0)
+        A = torch.where(A > 0.2, A, torch.zeros_like(A))
+        A = A + torch.eye(A.shape[0])
+        A = symmetric_normalize(A)
         A = A.to(self.device)
-        print("A shape", A.shape)
-        edge_index, edge_weight = dense_to_sparse(A)
-        print("edge shape", edge_index.shape)
 
-        if self.init_features == "ones":
-            X = torch.ones(A.shape[0], A.shape[1], self.in_channels, device=self.device)
+        X = self.node_features
+        adj_ms = []
+        indices_list = []
+        down_outs = []
+        org_A = torch.tensor(A)
+        org_X = torch.tensor(X)
+        for i in range(self.l_n):
+            X = self.down_gcns[i](A, X)
+            adj_ms.append(A)
+            down_outs.append(X)
+            A, X, idx = self.pools[i](A, X)
+            indices_list.append(idx)
 
-        if batch is None:
-            batch = A.new_zeros(X.size(0))
+        X = self.bottom_gcn(A, X)
+        for i in range(self.l_n):
+            up_idx = self.l_n - i - 1
+            A, idx = adj_ms[up_idx], indices_list[up_idx]
+            A, X = self.unpools[i](A, X, down_outs[up_idx], idx)
+            X = self.up_gcns[i](A, X)
+            # X = X.add(down_outs[up_idx])
 
-        X = self.down_convs[0](X, edge_index, edge_weight)
-        X = self.act(X)
+        # X = X.add(org_X)
 
-        xs = [X]
-        edge_indices = [A]
-        edge_weights = [edge_weight]
-        perms = []
-
-        for i in range(1, self.depth + 1):
-            edge_index, edge_weight = self.augment_adj(
-                edge_index, edge_weight, X.size(0)
-            )
-            X, edge_index, edge_weight, batch, perm, _ = self.pools[i - 1](
-                X, edge_index, edge_weight, batch
-            )
-
-            X = self.down_convs[i](X, edge_index, edge_weight)
-            X = self.act(X)
-
-            if i < self.depth:
-                xs += [X]
-                edge_indices += [A]
-                edge_weights += [edge_weight]
-            perms += [perm]
-
-        for i in range(self.depth):
-            j = self.depth - 1 - i
-
-            res = xs[j]
-            A = edge_indices[j]
-            edge_weight = edge_weights[j]
-            perm = perms[j]
-
-            up = torch.zeros_like(res)
-            up[perm] = X
-            X = res + up if self.sum_res else torch.cat((res, up), dim=-1)
-
-            X = self.up_convs[i](X, edge_index, edge_weight)
-            X = self.act(X) if i < self.depth - 1 else X
-
-        A_upsampled = self.upsampler.forward(X, A)
+        A_upsampled = self.upsampler.forward(X, org_A)
         return A_upsampled
 
-    def augment_adj(
-        self, edge_index: Tensor, edge_weight: Tensor, num_nodes: int
-    ) -> PairTensor:
-        edge_index, edge_weight = remove_self_loops(edge_index, edge_weight)
-        edge_index, edge_weight = add_self_loops(
-            edge_index, edge_weight, num_nodes=num_nodes
-        )
-        adj = to_dense_adj(edge_index=edge_index, edge_attr=edge_weight)
 
-        edge_index, edge_weight = dense_to_sparse(adj @ adj)
-        edge_index, edge_weight = remove_self_loops(edge_index, edge_weight)
-        return edge_index, edge_weight
+class GCN(nn.Module):
 
-    def __repr__(self) -> str:
-        return (
-            f"{self.__class__.__name__}({self.in_channels}, "
-            f"{self.hidden_channels}, {self.out_channels}, "
-            f"depth={self.depth}, pool_ratios={self.pool_ratios})"
-        )
+    def __init__(self, in_dim, out_dim, act, p):
+        super(GCN, self).__init__()
+        self.proj = nn.Linear(in_dim, out_dim)
+        self.act = act
+        self.drop = nn.Dropout(p=p) if p > 0.0 else nn.Identity()
+
+    def forward(self, g, h):
+        h = self.drop(h)  # they have added dropout
+        h = torch.matmul(g, h)
+        h = self.proj(h)
+        h = self.act(h)
+        return h
+
+
+class Pool(nn.Module):
+
+    def __init__(self, k, in_dim, p):
+        super(Pool, self).__init__()
+        self.k = k
+        self.sigmoid = nn.Sigmoid()
+        self.proj = nn.Linear(in_dim, 1)
+        self.drop = nn.Dropout(p=p) if p > 0 else nn.Identity()  # added dropout here
+
+    def forward(self, g, h):
+        Z = self.drop(h)
+        weights = self.proj(Z).squeeze()
+        scores = self.sigmoid(weights)
+        return top_k_graph(scores, g, h, self.k)
+
+
+class Unpool(nn.Module):
+
+    def __init__(self, *args):
+        super(Unpool, self).__init__()
+
+    def forward(self, A, X, pre_h, idx):
+        new_h = X.new_zeros([A.shape[0], X.shape[1]])
+        new_h[idx] = X
+        return A, new_h
+
+
+def top_k_graph(scores, A, X, k):
+    num_nodes = A.shape[0]
+    values, idx = torch.topk(
+        scores, max(2, int(k * num_nodes))
+    )  # make sure k works based on number of current nodes
+    X_pooled = X[idx, :]
+    values = torch.unsqueeze(values, -1)
+    X_pooled = torch.mul(X_pooled, values)
+    A_pooled = A.bool().float()
+    A_pooled = (
+        torch.matmul(A_pooled, A_pooled).bool().float()
+    )  # second power to reduce chance of isolated nodes
+    A_pooled = A_pooled[idx, :]
+    A_pooled = A_pooled[:, idx]
+    A_pooled = symmetric_normalize(A_pooled)
+    return A_pooled, X_pooled, idx
+
+
+def symmetric_normalize(A_tilde):
+    """
+    Performs symmetric normalization of A_tilde (Adj. matrix with self loops):
+      A_norm = D^{-1/2} * A_tilde * D^{-1/2}
+    Where D_{ii} = sum of row i in A_tilde.
+
+    A_tilde (N, N): Adj. matrix with self loops
+    Returns:
+      A_norm : (N, N)
+    """
+
+    eps = 1e-5
+    d = A_tilde.sum(dim=1) + eps
+    D_inv = torch.diag(torch.pow(d, -0.5))
+    return D_inv @ A_tilde @ D_inv

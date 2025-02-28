@@ -1,15 +1,12 @@
 # putting it all together - code taken from https://github.com/HongyangGao/Graph-U-Nets/tree/master
 
 import torch
-from torch import Tensor
 import torch.nn.functional as F
 import torch.nn as nn
-import torch
-import torch.nn as nn
-import numpy as np
+import networkx as nx
 
 
-def reconstruct_adjacency(X, threshold=0.15):
+def reconstruct_adjacency(X, threshold=0.2):
     """
     Reconstruct adjacency from node embeddings while preserving fMRI-like structure.
 
@@ -20,15 +17,14 @@ def reconstruct_adjacency(X, threshold=0.15):
     Returns:
         adj (torch.Tensor): Reconstructed weighted adjacency matrix
     """
-    # Normalize embeddings to unit length (cosine similarity instead of raw dot product)
-    X_norm = F.normalize(X, p=2, dim=1)  # [num_nodes, hidden_dim]
+    X_norm = X
     # Compute cosine similarity matrix
-    adj = X_norm @ X_norm.T  # Values in range [-1, 1]
+    adj = F.relu(X_norm @ X_norm.T)  # Values in range [-1, 1]
 
     # adj = torch.sigmoid(adj)
 
     # Apply sparsification: Keep only values above threshold
-    adj = torch.where(adj > threshold, adj, torch.zeros_like(adj))
+    # adj = torch.where(adj > threshold, adj, torch.zeros_like(adj))
 
     return adj
 
@@ -61,9 +57,9 @@ class GraphUpsampler(nn.Module):
         self.conv2 = GCN(hidden_dim, hidden_dim, act, drop_p)
 
         # MLP for new node generation
-        self.upsample_mlp = nn.Linear(n_nodes, m_nodes - n_nodes)
+        self.upsample_mlp = nn.Linear(n_nodes, m_nodes)
 
-    def forward(self, X, A):
+    def forward(self, X, A, refine=False):
         """
         Args:
         - x: Node features [num_nodes, in_dim]
@@ -75,25 +71,26 @@ class GraphUpsampler(nn.Module):
         """
 
         # Generate new nodes by transforming existing ones
-        new_nodes = torch.sigmoid(self.upsample_mlp(X.T).T)  # [num_nodes, in_dim]
+        X_upsampled = torch.sigmoid(self.upsample_mlp(X.T).T)  # [num_nodes, in_dim]
         # Concatenate old and new nodes
-        X_upsampled = torch.cat([X, new_nodes], dim=0)
+        # X_upsampled = torch.cat([X, new_nodes], dim=0)
 
         A_upsampled = reconstruct_adjacency(X=X_upsampled)
 
         # print("Mean : ", A_upsampled.mean().item(), "Std :", A_upsampled.std().item())
 
         # Message passing to refine embeddings
-        for _ in range(self.num_iterations):
-            X_upsampled = self.conv1(A_upsampled, X_upsampled)
-            X_upsampled = F.relu(X_upsampled)
-            A_upsampled = reconstruct_adjacency(X_upsampled)
+        if refine:
+            for _ in range(self.num_iterations):
+                X_upsampled = self.conv1(A_upsampled, X_upsampled)
+                X_upsampled = F.relu(X_upsampled)
+                A_upsampled = reconstruct_adjacency(X_upsampled)
 
-            X_upsampled = self.conv2(A_upsampled, X_upsampled)
-            X_upsampled = F.relu(X_upsampled)
+                X_upsampled = self.conv2(A_upsampled, X_upsampled)
+                X_upsampled = F.relu(X_upsampled)
 
-            # Reconstruct adjacency with updated embeddings
-            A_upsampled = reconstruct_adjacency(A_upsampled)
+                # Reconstruct adjacency with updated embeddings
+                A_upsampled = reconstruct_adjacency(A_upsampled)
 
         return A_upsampled
 
@@ -104,7 +101,7 @@ class GraphUnet(nn.Module):
         super(GraphUnet, self).__init__()
         self.ks = ks
         self.dim = dim
-        self.bottom_gcn = GCN(dim, dim, act, drop_p)
+
         self.down_gcns = nn.ModuleList()
         self.up_gcns = nn.ModuleList()
         self.pools = nn.ModuleList()
@@ -118,35 +115,98 @@ class GraphUnet(nn.Module):
             drop_p=drop_p,
         )
         self.l_n = len(ks)
-        for i in range(self.l_n):
-            self.down_gcns.append(GCN(dim, dim, act, drop_p))
-            self.up_gcns.append(GCN(dim, dim, act, drop_p))
-            self.pools.append(Pool(ks[i], dim, drop_p))
+        for k in ks:
+            # out_dim = dim
+            out_dim = int(dim / k)
+            self.down_gcns.append(GCN(dim, out_dim, act, drop_p))
+            self.up_gcns.append(GCN(out_dim, dim, act, drop_p))
+            self.pools.append(Pool(k, out_dim, drop_p))
             self.unpools.append(Unpool(dim, dim, drop_p))
+            dim = out_dim
 
-        self.node_features = nn.Parameter(torch.randn(n_nodes, dim))
+        self.up_gcns = self.up_gcns[::-1]
+        # self.node_features = nn.Parameter(torch.randn(n_nodes, dim))
+        self.bottom_gcn = GCN(dim, dim, act, drop_p)
 
     @property
     def device(self):
         return next(self.parameters()).device
 
-    def forward(self, A: torch.Tensor):
+    def build_batch_features(
+        self, batch: list[torch.Tensor], n_jobs: int = 1
+    ) -> torch.Tensor:
+        # Build batch features using topological information
+        from joblib import Parallel, delayed
+
+        # Use the build_node_features function to build features for each graph in the batch
+        features = Parallel(n_jobs=n_jobs)(
+            delayed(self.build_node_features)(adjacency) for adjacency in batch
+        )
+        return torch.stack(features, dim=0)
+
+    def build_node_features(self, adjacency: torch.Tensor) -> torch.Tensor:
+        # Build node features using topological information
+
+        # Compute degree matrix
+        D = torch.diag(torch.sum(adjacency, dim=1)).cpu()
+
+        # Compute Node betweenness centrality
+        G = nx.from_numpy_array(adjacency.cpu().numpy())
+        betweenness = torch.tensor(
+            list(nx.betweenness_centrality(G).values()), dtype=torch.float32
+        )
+
+        # Compute Node closeness centrality
+        closeness = torch.tensor(
+            list(nx.closeness_centrality(G).values()), dtype=torch.float32
+        )
+
+        # Compute Node clustering coefficient
+        clustering = torch.tensor(list(nx.clustering(G).values()), dtype=torch.float32)
+
+        # Compute eigenvector centrality
+        eigenvector = torch.tensor(
+            list(nx.eigenvector_centrality(G).values()), dtype=torch.float32
+        )
+
+        # Compute Laplacian eigenvecs
+        eigvals, eigvecs = torch.linalg.eigh(D - adjacency.cpu())
+        laplacian_eigenvecs = eigvecs[:, 1 : self.dim - 3]
+
+        # Concatenate all features
+        node_features = torch.stack(
+            [betweenness, closeness, clustering, eigenvector], dim=1
+        )
+        # Include Laplacian eigenvecs
+        node_features = torch.cat([node_features, laplacian_eigenvecs], dim=1)
+
+        return node_features
+
+    def forward(
+        self, A: torch.Tensor, skip: bool = False, threshold: float = -1, X=None
+    ):
         # Process A
-        A = A.squeeze(0)
-        A = torch.where(A > 0.2, A, torch.zeros_like(A))
+        if threshold > 0:
+            A = torch.where(A > threshold, A, torch.zeros_like(A))
         A = A + torch.eye(A.shape[0])
         A = symmetric_normalize(A)
         A = A.to(self.device)
 
-        X = self.node_features
-        adj_ms = []
+        if X is None:
+            X = torch.randn(A.shape[0], self.dim, device=self.device)
+        else:
+            X = X.to(self.device)
+
+        A_history = []
+        A_recon_history = []
         indices_list = []
         down_outs = []
-        org_A = torch.tensor(A)
-        org_X = torch.tensor(X)
+        org_A = A.clone()
+        if skip:
+            org_X = X.clone()
         for i in range(self.l_n):
             X = self.down_gcns[i](A, X)
-            adj_ms.append(A)
+            A_history.append(A)
             down_outs.append(X)
             A, X, idx = self.pools[i](A, X)
             indices_list.append(idx)
@@ -154,31 +214,38 @@ class GraphUnet(nn.Module):
         X = self.bottom_gcn(A, X)
         for i in range(self.l_n):
             up_idx = self.l_n - i - 1
-            A, idx = adj_ms[up_idx], indices_list[up_idx]
+            A, idx = A_history[up_idx], indices_list[up_idx]
             A, X = self.unpools[i](A, X, down_outs[up_idx], idx)
             X = self.up_gcns[i](A, X)
-            # X = X.add(down_outs[up_idx])
 
-        # X = X.add(org_X)
+            A_recon = reconstruct_adjacency(X)
+            A_recon_history.append(A_recon)
+            if skip:
+
+                X = X.add(down_outs[up_idx])
+
+        if skip:
+            X = X.add(org_X)
 
         A_upsampled = self.upsampler.forward(X, org_A)
-        return A_upsampled
+
+        return A_upsampled, A_history, A_recon_history
 
 
 class GCN(nn.Module):
 
     def __init__(self, in_dim, out_dim, act, p):
         super(GCN, self).__init__()
-        self.proj = nn.Linear(in_dim, out_dim)
+        self.proj = nn.Linear(in_dim, out_dim, bias=False)
         self.act = act
         self.drop = nn.Dropout(p=p) if p > 0.0 else nn.Identity()
 
-    def forward(self, g, h):
-        h = self.drop(h)  # they have added dropout
-        h = torch.matmul(g, h)
-        h = self.proj(h)
-        h = self.act(h)
-        return h
+    def forward(self, A, X):
+        X = self.drop(X)  # they have added dropout
+        X = torch.matmul(A, X)
+        X = self.proj(X)
+        X = self.act(X)
+        return X
 
 
 class Pool(nn.Module):
@@ -216,12 +283,16 @@ def top_k_graph(scores, A, X, k):
     X_pooled = X[idx, :]
     values = torch.unsqueeze(values, -1)
     X_pooled = torch.mul(X_pooled, values)
-    A_pooled = A.bool().float()
-    A_pooled = (
-        torch.matmul(A_pooled, A_pooled).bool().float()
-    )  # second power to reduce chance of isolated nodes
-    A_pooled = A_pooled[idx, :]
+    # A_pooled = A.bool().float()
+    # A_pooled = (
+    #    torch.matmul(A_pooled, A_pooled).bool().float()
+    # )  # second power to reduce chance of isolated nodes
+    A_pooled = A[idx, :]
     A_pooled = A_pooled[:, idx]
+    # Peform thresholding
+    # A_pooled = torch.where(
+    #    A_pooled > 0.0, torch.ones_like(A_pooled), torch.zeros_like(A_pooled)
+    # )
     A_pooled = symmetric_normalize(A_pooled)
     return A_pooled, X_pooled, idx
 

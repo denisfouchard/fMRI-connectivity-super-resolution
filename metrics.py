@@ -1,11 +1,11 @@
 from MatrixVectorizer import MatrixVectorizer
 
-from sklearn.metrics import mean_squared_error, mean_absolute_error
+from sklearn.metrics import mean_absolute_error
 from scipy.stats import pearsonr
 from scipy.spatial.distance import jensenshannon
-import torch
 import networkx as nx
 import numpy as np
+import torch
 
 
 def evaluation_metrics(pred, true, print: bool = False):
@@ -17,7 +17,7 @@ def evaluation_metrics(pred, true, print: bool = False):
     pred_1d_list = []
     gt_1d_list = []
 
-    num_test_samples = pred.shape[0]
+    num_test_samples = len(pred)
     # Iterate over each test sample
     for i in range(num_test_samples):
         # Convert adjacency matrices to NetworkX graphs
@@ -81,3 +81,29 @@ def evaluation_metrics(pred, true, print: bool = False):
         "avg_mae_ec": avg_mae_ec,
         "avg_mae_pc": avg_mae_pc,
     }
+
+
+@torch.no_grad()
+def evaluate_model(model, dataloader):
+    """
+    Runs forward pass, calculates binary predictions (threshold=0.5),
+    and returns the accuracy score.
+    """
+    from metrics import evaluation_metrics
+
+    model.eval()
+
+    preds = []
+    true = []
+    for batch in dataloader:
+        inputs, targets = batch
+        inputs = inputs.squeeze(0)
+        targets = targets.squeeze(0)
+        inputs.to(model.device)
+        outputs, _, _ = model(inputs)
+        preds.append(outputs.detach().cpu().numpy())
+        true.append(targets.detach().cpu().numpy())
+
+    batch_metrics = evaluation_metrics(preds, true)
+
+    return batch_metrics

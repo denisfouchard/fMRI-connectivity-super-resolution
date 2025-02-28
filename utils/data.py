@@ -2,12 +2,14 @@ import torch
 import pytorch_lightning as pl
 import pandas as pd
 import os
-from MatrixVectorizer import MatrixVectorizer
 import numpy as np
 import time
-from torch_geometric.data import Data, DataLoader
+from torch_geometric.data import Data
+from torch_geometric.loader import DataLoader
 from typing import List
 from tqdm import tqdm
+
+from utils.matrix_vectorizer import MatrixVectorizer
 
 
 def create_graph(adjacency_matrix, target_adjacency_matrix, node_features=None) -> Data:

@@ -6,7 +6,7 @@ import numpy as np
 import time
 from torch_geometric.data import Data, Batch
 from torch_geometric.loader import DataLoader
-from typing import List
+from typing import List, Tuple
 from tqdm import tqdm
 
 from utils.matrix_vectorizer import MatrixVectorizer
@@ -114,24 +114,12 @@ class GraphDataModule(pl.LightningDataModule):
     ):
         super().__init__()
         self.num_workers = num_workers
-        hr_train_path = os.path.join(data_dir, "hr_train.pt")
-        lr_train_path = os.path.join(data_dir, "lr_train.pt")
-        is_init = os.path.exists(hr_train_path) and os.path.exists(lr_train_path)
-        if is_init:
-            print("Loading data from disk")
-            self.hr_train = torch.load(hr_train_path)
-            self.lr_train = torch.load(lr_train_path)
-        else:
-            self.hr_train = csv_to_tensor(os.path.join(data_dir, "hr_train.csv"))
-            self.lr_train = csv_to_tensor(os.path.join(data_dir, "lr_train.csv"))
-            # Save the tensors to disk
+        self.hr_train = csv_to_tensor(os.path.join(data_dir, "hr_train.csv"))
+        self.lr_train = csv_to_tensor(os.path.join(data_dir, "lr_train.csv"))
+        self.lr_test = csv_to_tensor(os.path.join(data_dir, "lr_test.csv"))
 
         self.batch_size = batch_size
         self.p_val = p_val
-
-        if not is_init:
-            torch.save(self.lr_train, lr_train_path)
-            torch.save(self.hr_train, hr_train_path)
 
         # Shuffle and split the training data into training and validation sets
         num_train = len(self.lr_train)
@@ -150,9 +138,10 @@ class GraphDataModule(pl.LightningDataModule):
 
         self.train_dataset = self._get_data(lr_data=self.lr_train, hr_data=self.hr_train)
         self.val_dataset = self._get_data(lr_data=self.lr_val, hr_data=self.hr_val)
+        self.test_dataset = self._get_test_data(lr_data=self.lr_test)
 
-
-    def _get_data(self, lr_data, hr_data, is_vector=True) -> List[Data]:
+    @staticmethod
+    def _get_data(lr_data, hr_data, is_vector=True) -> Tuple[List[Data],List[Data]]:
         assert lr_data.shape[0] == hr_data.shape[0]
         lr_size = 160
         hr_size = 268
@@ -160,7 +149,6 @@ class GraphDataModule(pl.LightningDataModule):
         lr_graphs = []
         hr_graphs = []
         if is_vector:
-
             progress_bar = tqdm(range(lr_data.shape[0]))
             progress_bar.set_description(f"Converting vectors to graphs")
             for i in progress_bar:
@@ -178,14 +166,52 @@ class GraphDataModule(pl.LightningDataModule):
                 hr_graphs.append(hr_graph)
         return lr_graphs, hr_graphs
 
+    @staticmethod
+    def _get_test_data(lr_data, is_vector=True) -> List[Data]:
+        lr_size = 160
 
-    def train_dataloader(self):
+        lr_graphs = []
+        if is_vector:
+            progress_bar = tqdm(range(lr_data.shape[0]))
+            progress_bar.set_description(f"Converting vectors to graphs")
+            for i in progress_bar:
+                lr_m = MatrixVectorizer.anti_vectorize(
+                    vector=lr_data[i], matrix_size=lr_size
+                )
+                lr_graph = create_graph(lr_m)
+                lr_graphs.append(lr_graph)
+        return lr_graphs
+
+    def train_dataloader(self) -> UpscaledGraphDataLoader:
         return UpscaledGraphDataLoader(self.train_dataset[0], self.train_dataset[1], batch_size=self.batch_size)
 
-
-    def val_dataloader(self):
+    def val_dataloader(self) -> UpscaledGraphDataLoader:
         return UpscaledGraphDataLoader(self.val_dataset[0], self.val_dataset[1], batch_size=self.batch_size)
 
+    def test_dataloader(self) -> DataLoader:
+        return DataLoader(self.test_dataset, batch_size=self.batch_size)
+
+
+@torch.no_grad()
+def save_prediction(model, dataloader, output_file):
+    model.eval()
+
+    preds = []
+    for batch in dataloader:
+        batch = batch.to(model.device)
+        outputs = model(batch)
+        preds.append(outputs.detach().cpu().numpy())
+
+    # Vectorize matrices
+    preds = [MatrixVectorizer.vectorize(p) for p in preds]
+    preds = np.array(preds)
+
+    # Submission format
+    print(preds.shape)
+    submission_df = pd.DataFrame(
+        {"ID": range(1, len(preds.flatten()) + 1), "Predicted": preds.flatten()}
+    )
+    submission_df.to_csv(output_file, index=False)
 
 if __name__ == "__main__":
     data_module = GraphDataModule(data_dir="./data")

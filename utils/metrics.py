@@ -1,4 +1,4 @@
-from MatrixVectorizer import MatrixVectorizer
+from utils.matrix_vectorizer import MatrixVectorizer
 
 from sklearn.metrics import mean_absolute_error
 from scipy.stats import pearsonr
@@ -6,6 +6,9 @@ from scipy.spatial.distance import jensenshannon
 import networkx as nx
 import numpy as np
 import torch
+from tqdm import tqdm
+from torch_geometric.utils import to_dense_adj
+
 
 
 def evaluation_metrics(pred, true, print: bool = False):
@@ -19,7 +22,7 @@ def evaluation_metrics(pred, true, print: bool = False):
 
     num_test_samples = len(pred)
     # Iterate over each test sample
-    for i in range(num_test_samples):
+    for i in tqdm(range(num_test_samples)):
         # Convert adjacency matrices to NetworkX graphs
         pred_graph = nx.from_numpy_array(pred[i], edge_attr="weight")
         gt_graph = nx.from_numpy_array(true[i], edge_attr="weight")
@@ -89,21 +92,25 @@ def evaluate_model(model, dataloader):
     Runs forward pass, calculates binary predictions (threshold=0.5),
     and returns the accuracy score.
     """
-    from metrics import evaluation_metrics
-
     model.eval()
 
     preds = []
     true = []
-    for batch in dataloader:
-        inputs, targets = batch
-        inputs = inputs.squeeze(0)
-        targets = targets.squeeze(0)
-        inputs.to(model.device)
-        outputs, _, _ = model(inputs)
-        preds.append(outputs.detach().cpu().numpy())
-        true.append(targets.detach().cpu().numpy())
+    for (batch,target_batch) in dataloader:
+        batch = batch.to(model.device)
+        targets = to_dense_adj(target_batch.edge_index, batch=target_batch.batch)
 
-    batch_metrics = evaluation_metrics(preds, true)
+        outputs = model(batch)
+        
+        outputs = outputs.detach().cpu().numpy()
+        targets = targets.detach().cpu().numpy()
+        
+        for i in range(len(outputs)):
+            preds.append(outputs[i])
+            true.append(targets[i])
 
-    return batch_metrics
+    preds = np.array(preds)
+    true = np.array(true)
+
+    return np.mean(np.abs(preds-true))
+

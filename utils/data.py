@@ -4,7 +4,7 @@ import pandas as pd
 import os
 import numpy as np
 import time
-from torch_geometric.data import Data
+from torch_geometric.data import Data, Batch
 from torch_geometric.loader import DataLoader
 from typing import List
 from tqdm import tqdm
@@ -12,7 +12,7 @@ from tqdm import tqdm
 from utils.matrix_vectorizer import MatrixVectorizer
 
 
-def create_graph(adjacency_matrix, target_adjacency_matrix, node_features=None) -> Data:
+def create_graph(adjacency_matrix, node_features=None) -> Data:
     """
     Convert an adjacency matrix to a PyG Data object.
 
@@ -48,7 +48,6 @@ def create_graph(adjacency_matrix, target_adjacency_matrix, node_features=None) 
         x=x,
         edge_index=edge_index,
         edge_attr=edge_attr,
-        y=target_adjacency_matrix,
         num_nodes=adjacency_matrix.shape[0]
     )
 
@@ -62,6 +61,29 @@ def csv_to_tensor(file_path):
     print(f"Time taken to load {file_path}: {end_time - start_time} seconds")
     return tensor
 
+
+class UpscaledGraphDataLoader:
+    def __init__(self, input_graphs, output_graphs, batch_size):
+        assert len(input_graphs)==len(output_graphs)
+        self.input_graphs = input_graphs
+        self.output_graphs = output_graphs
+        self.batch_size = batch_size
+        self.indices = list(range(len(input_graphs))) # List of indices to shuffle
+        self.shuffle()
+
+    def shuffle(self):
+        np.random.shuffle(self.indices)  # Shuffle the dataset indices
+
+    def __iter__(self):
+        for i in range(0, len(self.input_graphs), self.batch_size):
+            batch_indices = self.indices[i:i + self.batch_size]  # Get batch indices
+            input_graphs = Batch.from_data_list([self.input_graphs[idx] for idx in batch_indices])
+            output_graphs = Batch.from_data_list([self.output_graphs[idx] for idx in batch_indices])
+            yield input_graphs, output_graphs
+        self.shuffle()
+
+    def __len__(self):
+        return len(self.input_graphs)//self.batch_size
 
 
 class GraphDataModule(pl.LightningDataModule):
@@ -135,7 +157,8 @@ class GraphDataModule(pl.LightningDataModule):
         lr_size = 160
         hr_size = 268
 
-        data = []
+        lr_graphs = []
+        hr_graphs = []
         if is_vector:
 
             progress_bar = tqdm(range(lr_data.shape[0]))
@@ -148,18 +171,20 @@ class GraphDataModule(pl.LightningDataModule):
                     vector=hr_data[i], matrix_size=hr_size
                 )
 
-                graph = create_graph(lr_m, hr_m)
+                lr_graph = create_graph(lr_m)
+                hr_graph = create_graph(hr_m)
 
-                data.append(graph)
-        return data
+                lr_graphs.append(lr_graph)
+                hr_graphs.append(hr_graph)
+        return lr_graphs, hr_graphs
 
 
     def train_dataloader(self):
-        return DataLoader(self.train_dataset, batch_size=self.batch_size, num_workers=self.num_workers)
+        return UpscaledGraphDataLoader(self.train_dataset[0], self.train_dataset[1], batch_size=self.batch_size)
 
 
     def val_dataloader(self):
-        return DataLoader(self.val_dataset, batch_size=self.batch_size, num_workers=self.num_workers)
+        return UpscaledGraphDataLoader(self.val_dataset[0], self.val_dataset[1], batch_size=self.batch_size)
 
 
 if __name__ == "__main__":

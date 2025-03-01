@@ -5,7 +5,9 @@ import copy
 from tqdm import tqdm
 import torch.nn as nn
 from torch_geometric.data import Data
+from torch_geometric.utils import to_dense_adj
 
+from utils.metrics import evaluation_metrics
 
 # Assuming metrics.py is adapted for PyG data format
 # from metrics import evaluation_metrics
@@ -78,20 +80,19 @@ def train_model(
 
     progress_bar = tqdm(range(num_epochs))
     for epoch in progress_bar:
-        progress_bar.set_description(f"Epoch {epoch}|{num_epochs}")
         model.train()
         epoch_loss = 0.0
 
-        for batch in train_dataloader:
-            # In PyG, batch is a Data object or a Batch of Data objects
+        for (batch,target_batch) in train_dataloader:
             batch = batch.to(model.device)
+            target_batch = target_batch.to(model.device)
             optimizer.zero_grad()
 
             # Forward pass on training data
             outputs = model(batch)
 
             # Assuming y contains the target adjacency information
-            targets = batch.y
+            targets = to_dense_adj(target_batch.edge_index, batch=target_batch.batch)
 
             loss = criterion(
                 outputs,
@@ -104,6 +105,7 @@ def train_model(
 
             # Record training loss
             epoch_loss += loss.item()
+            progress_bar.set_description(f"Epoch loss {loss.item()}")
 
         avg_loss = epoch_loss / len(train_dataloader)
         train_loss_history.append(avg_loss)
@@ -113,12 +115,13 @@ def train_model(
             model.eval()
             val_loss = 0.0
             with torch.no_grad():
-                for batch in val_dataloader:
+                for (batch,target_batch) in val_dataloader:
                     batch = batch.to(model.device)
+                    target_batch = target_batch.to(model.device)
 
-                    outputs = model(batch, skip=skip)
+                    outputs = model(batch)
 
-                    targets = batch.y
+                    targets = to_dense_adj(target_batch.edge_index, batch=target_batch.batch)
 
                     val_loss += criterion(
                         outputs,
@@ -150,37 +153,4 @@ def train_model(
         model.load_state_dict(best_model_state_dict)
 
     return train_loss_history, val_loss_history, lr_history, best_model_state_dict
-
-
-@torch.no_grad()
-def evaluate_model(model, dataloader):
-    """
-    Runs forward pass, calculates predictions, and returns metrics.
-    Adapted for PyTorch Geometric data format.
-    """
-    from metrics import evaluation_metrics
-
-    model.eval()
-
-    preds = []
-    true = []
-    for batch in dataloader:
-        batch = batch.to(model.device)
-
-        outputs, _, _ = model(
-            x=batch.x,
-            edge_index=batch.edge_index,
-            edge_attr=batch.edge_attr if hasattr(batch, 'edge_attr') else None
-        )
-
-        # Assuming batch.y contains the target adjacency information
-        targets = batch.y
-
-        preds.append(outputs.detach().cpu().numpy())
-        true.append(targets.detach().cpu().numpy())
-
-    batch_metrics = evaluation_metrics(preds, true)
-
-    return batch_metrics
-
 

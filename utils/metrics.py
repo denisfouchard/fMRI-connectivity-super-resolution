@@ -1,11 +1,14 @@
-from MatrixVectorizer import MatrixVectorizer
+from utils.matrix_vectorizer import MatrixVectorizer
 
-from sklearn.metrics import mean_squared_error, mean_absolute_error
+from sklearn.metrics import mean_absolute_error
 from scipy.stats import pearsonr
 from scipy.spatial.distance import jensenshannon
-import torch
 import networkx as nx
 import numpy as np
+import torch
+from tqdm import tqdm
+from torch_geometric.utils import to_dense_adj
+
 
 
 def evaluation_metrics(pred, true, print: bool = False):
@@ -17,9 +20,9 @@ def evaluation_metrics(pred, true, print: bool = False):
     pred_1d_list = []
     gt_1d_list = []
 
-    num_test_samples = pred.shape[0]
+    num_test_samples = len(pred)
     # Iterate over each test sample
-    for i in range(num_test_samples):
+    for i in tqdm(range(num_test_samples)):
         # Convert adjacency matrices to NetworkX graphs
         pred_graph = nx.from_numpy_array(pred[i], edge_attr="weight")
         gt_graph = nx.from_numpy_array(true[i], edge_attr="weight")
@@ -81,3 +84,33 @@ def evaluation_metrics(pred, true, print: bool = False):
         "avg_mae_ec": avg_mae_ec,
         "avg_mae_pc": avg_mae_pc,
     }
+
+
+@torch.no_grad()
+def evaluate_model(model, dataloader):
+    """
+    Runs forward pass, calculates binary predictions (threshold=0.5),
+    and returns the accuracy score.
+    """
+    model.eval()
+
+    preds = []
+    true = []
+    for (batch,target_batch) in dataloader:
+        batch = batch.to(model.device)
+        targets = to_dense_adj(target_batch.edge_index, batch=target_batch.batch)
+
+        outputs = model(batch)
+        
+        outputs = outputs.detach().cpu().numpy()
+        targets = targets.detach().cpu().numpy()
+        
+        for i in range(len(outputs)):
+            preds.append(outputs[i])
+            true.append(targets[i])
+
+    preds = np.array(preds)
+    true = np.array(true)
+
+    return np.mean(np.abs(preds-true))
+

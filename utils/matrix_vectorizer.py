@@ -60,40 +60,36 @@ class MatrixVectorizer:
     @staticmethod
     def anti_vectorize(vector, matrix_size, include_diagonal=False):
         """
-        Reconstructs a matrix from its vector form, filling it vertically.
-
-        The method fills the matrix by reflecting vector elements into the upper triangle
-        and optionally including the diagonal elements based on the include_diagonal flag.
+        Efficiently reconstructs a symmetric matrix from its vector form.
 
         Parameters:
-        - vector (numpy.ndarray): The vector to be transformed into a matrix.
+        - vector (torch.Tensor): The vector to be transformed into a matrix.
         - matrix_size (int): The size of the square matrix to be reconstructed.
-        - include_diagonal (bool, optional): Flag to include diagonal elements in the reconstruction.
-          Defaults to False.
+        - include_diagonal (bool, optional): Flag to include diagonal elements. Defaults to False.
 
         Returns:
-        - numpy.ndarray: The reconstructed square matrix.
+        - torch.Tensor: The reconstructed symmetric square matrix.
         """
-        # Initialize a square matrix of zeros with the specified size
-        matrix = torch.zeros((matrix_size, matrix_size))
+        # Create symmetric indices for upper triangle
+        indices = torch.triu_indices(matrix_size, matrix_size, offset=1)
 
-        # Index to keep track of the current position in the vector
-        vector_idx = 0
+        # Initialize the matrix
+        matrix = torch.zeros((matrix_size, matrix_size), device=vector.device
+        if hasattr(vector, 'device') else None)
 
-        # Fill the matrix by iterating over columns and then rows
-        for col in range(matrix_size):
-            for row in range(matrix_size):
-                # Skip diagonal elements if not including them
-                if row != col:
-                    if row < col:
-                        # Reflect vector elements into the upper triangle and its mirror in the lower triangle
-                        matrix[row, col] = vector[vector_idx]
-                        matrix[col, row] = vector[vector_idx]
-                        vector_idx += 1
-                    elif include_diagonal and row == col + 1:
-                        # Optionally fill the diagonal elements after completing each column
-                        matrix[row, col] = vector[vector_idx]
-                        matrix[col, row] = vector[vector_idx]
-                        vector_idx += 1
+        # Number of elements in the upper triangle (excluding diagonal)
+        n_elements = indices.shape[1]
+
+        # Ensure the vector has the right number of elements
+        assert vector.shape[0] >= n_elements, "Vector size doesn't match required elements"
+
+        # Fill upper and lower triangles simultaneously
+        matrix[indices[0], indices[1]] = vector[:n_elements]
+        matrix[indices[1], indices[0]] = vector[:n_elements]
+
+        # Handle diagonal if needed
+        if include_diagonal:
+            diag_idx = torch.arange(matrix_size)
+            matrix[diag_idx, diag_idx] = vector[n_elements:n_elements + matrix_size]
 
         return matrix

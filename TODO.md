@@ -1,6 +1,12 @@
 
 
-## Areas of research
+
+
+## Ideas for model
+- GraphVAE : reconstruct a higher dimension $A$ from embeddings (Inner Product Decoder)
+- GraphU-NET : only the up part
+
+## References to explore
 
 - GraphVAE
 - DGMG (https://arxiv.org/pdf/1803.03324)

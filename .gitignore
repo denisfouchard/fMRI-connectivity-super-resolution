@@ -3,5 +3,6 @@
 .DS_Store
 *.csv
 *.pt
-
+*.pth
 __pycache__
+

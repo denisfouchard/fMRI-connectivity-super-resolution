@@ -9,7 +9,7 @@ class SuperResMLP(nn.Module):
         h = int(np.sqrt(output_size))
         self.layers = nn.ModuleList(
             [
-                nn.Flatten(),
+                nn.Flatten(start_dim=1),
                 nn.Linear(in_features=input_size, out_features=hidden_dim),
                 nn.BatchNorm1d(num_features=hidden_dim),
                 nn.Dropout(p=0.1),
@@ -36,5 +36,4 @@ class SuperResMLP(nn.Module):
         x = samples.to(self.device)
         for layer in self.layers:
             x = layer(x)
-
         return x

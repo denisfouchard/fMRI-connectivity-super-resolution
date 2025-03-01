@@ -98,7 +98,7 @@ def evaluate_model(model, dataloader):
     true = []
     for (batch,target_batch) in dataloader:
         batch = batch.to(model.device)
-        targets = to_dense_adj(target_batch.edge_index, batch=target_batch.batch)
+        targets = to_dense_adj(target_batch.edge_index, edge_attr=target_batch.edge_attr, batch=target_batch.batch)
 
         outputs = model(batch)
         

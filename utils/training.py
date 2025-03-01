@@ -92,7 +92,7 @@ def train_model(
             outputs = model(batch)
 
             # Assuming y contains the target adjacency information
-            targets = to_dense_adj(target_batch.edge_index, batch=target_batch.batch)
+            targets = to_dense_adj(target_batch.edge_index, edge_attr=target_batch.edge_attr, batch=target_batch.batch)
 
             loss = criterion(
                 outputs,
@@ -121,7 +121,7 @@ def train_model(
 
                     outputs = model(batch)
 
-                    targets = to_dense_adj(target_batch.edge_index, batch=target_batch.batch)
+                    targets = to_dense_adj(target_batch.edge_index, edge_attr=target_batch.edge_attr, batch=target_batch.batch)
 
                     val_loss += criterion(
                         outputs,

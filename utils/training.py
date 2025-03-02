@@ -105,7 +105,6 @@ def train_model(
 
             # Record training loss
             epoch_loss += loss.item()
-            progress_bar.set_description(f"Epoch loss {loss.item()}")
 
         avg_loss = epoch_loss / len(train_dataloader)
         train_loss_history.append(avg_loss)

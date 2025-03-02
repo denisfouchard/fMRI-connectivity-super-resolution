@@ -12,7 +12,32 @@ from tqdm import tqdm
 from utils.matrix_vectorizer import MatrixVectorizer
 
 
-def create_graph(adjacency_matrix, node_features=None) -> Data:
+def calculate_topological_metrics(adj_matrix):
+    num_nodes = adj_matrix.size(0)
+    metrics = []
+
+    # Degree (weighted sum of edges per node)
+    degree = torch.sum(adj_matrix, dim=1)
+
+    # Strength (same as degree for weighted graphs)
+    strength = degree.clone()
+
+    # Clustering Coefficient (local triangle clustering approximation)
+    triangles = torch.diagonal(torch.matmul(adj_matrix, torch.matmul(adj_matrix, adj_matrix)))
+    possible_triangles = degree * (degree - 1)
+    clustering_coeff = torch.where(possible_triangles > 0, triangles / possible_triangles, torch.zeros_like(triangles))
+
+    # Average Neighbor Degree (weighted neighbor degree average)
+    neighbor_degrees = torch.matmul(adj_matrix, degree.unsqueeze(1)).squeeze(1)
+    neighbor_counts = torch.sum((adj_matrix > 0).float(), dim=1)
+    avg_neighbor_degree = torch.where(neighbor_counts > 0, neighbor_degrees / neighbor_counts, torch.zeros_like(neighbor_degrees))
+
+    # Combine metrics into 2D tensor (num_nodes x 4)
+    metrics = torch.stack([degree, strength, clustering_coeff, avg_neighbor_degree], dim=1)
+
+    return metrics
+
+def create_graph(adjacency_matrix) -> Data:
     """
     Convert an adjacency matrix to a PyG Data object.
 
@@ -41,7 +66,7 @@ def create_graph(adjacency_matrix, node_features=None) -> Data:
     edge_attr = adjacency_matrix[edge_indices]
 
     # Set node features if provided, otherwise use ones
-    x = node_features if node_features is not None else torch.ones((adjacency_matrix.shape[0], 1))
+    x = calculate_topological_metrics(adjacency_matrix)
 
     # Create Data object
     data = Data(

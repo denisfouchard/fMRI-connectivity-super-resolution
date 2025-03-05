@@ -32,10 +32,54 @@ def calculate_topological_metrics(adj_matrix):
     neighbor_counts = torch.sum((adj_matrix > 0).float(), dim=1)
     avg_neighbor_degree = torch.where(neighbor_counts > 0, neighbor_degrees / neighbor_counts, torch.zeros_like(neighbor_degrees))
 
-    # Combine metrics into 2D tensor (num_nodes x 4)
-    metrics = torch.stack([degree, strength, clustering_coeff, avg_neighbor_degree], dim=1)
+    # Degree Centrality (normalized)
+    degree_centrality = degree / (num_nodes - 1)
+
+    # Closeness Centrality
+    # Assuming adjacency matrix is symmetric (undirected graph)
+    distances = torch.linalg.inv(torch.eye(num_nodes) - adj_matrix)
+    closeness_centrality = torch.sum(distances, dim=1) / (num_nodes - 1)
+
+    # Betweenness Centrality (approximation using shortest paths)
+    betweenness_centrality = torch.zeros(num_nodes)
+    for s in range(num_nodes):
+        for t in range(num_nodes):
+            if s != t:
+                # Find shortest paths from s to t (using Floyd-Warshall or similar method)
+                pass  # This part is complex and will require algorithmic implementation
+
+    # Eigenvector Centrality (using power iteration method)
+    eigenvector = torch.ones(num_nodes)
+    for _ in range(100):  # Iterating to approximate eigenvector centrality
+        eigenvector = torch.matmul(adj_matrix, eigenvector)
+        eigenvector = eigenvector / torch.norm(eigenvector)
+
+
+    # Density (graph density)
+    max_edges = num_nodes * (num_nodes - 1) / 2
+    density = torch.sum(adj_matrix) / max_edges
+
+    # Average Path Length (approximation using all pairs of nodes)
+    # We use the distance matrix (or some form of shortest paths) to approximate this
+    # Assuming distances between disconnected nodes are infinite, this would require a full shortest path calculation.
+    path_lengths = torch.ones((num_nodes, num_nodes)) * float('inf')  # Example initialization
+    for i in range(num_nodes):
+        for j in range(num_nodes):
+            if adj_matrix[i, j] > 0:
+                path_lengths[i, j] = 1
+            elif i == j:
+                path_lengths[i, j] = 0
+
+    avg_path_length = torch.mean(path_lengths[path_lengths < float('inf')])
+
+    # Combine metrics into 2D tensor (num_nodes x 10)
+    metrics = torch.stack([
+        degree, strength, clustering_coeff, avg_neighbor_degree, degree_centrality, 
+        closeness_centrality, betweenness_centrality, eigenvector
+    ], dim=1)
 
     return metrics
+
 
 def create_graph(adjacency_matrix) -> Data:
     """

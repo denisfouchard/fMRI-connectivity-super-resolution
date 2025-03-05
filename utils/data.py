@@ -203,11 +203,13 @@ def save_prediction(model, dataloader, output_file):
         preds.append(outputs.detach().cpu().numpy())
 
     # Vectorize matrices
-    preds = [MatrixVectorizer.vectorize(p) for p in preds]
-    preds = np.array(preds)
+    vector_preds = []
+    for batch in preds:
+        vectors = [MatrixVectorizer.vectorize(p) for p in batch]
+        vector_preds = vector_preds + vectors
+    preds = np.array(vector_preds)
 
     # Submission format
-    print(preds.shape)
     submission_df = pd.DataFrame(
         {"ID": range(1, len(preds.flatten()) + 1), "Predicted": preds.flatten()}
     )

@@ -12,7 +12,7 @@ from tqdm import tqdm
 from utils.matrix_vectorizer import MatrixVectorizer
 
 
-def calculate_topological_metrics(adj_matrix):
+def calculate_topological_metrics(adj_matrix, ):
     num_nodes = adj_matrix.size(0)
     metrics = []
 
@@ -110,7 +110,8 @@ def create_graph(adjacency_matrix) -> Data:
     edge_attr = adjacency_matrix[edge_indices]
 
     # Set node features if provided, otherwise use ones
-    x = calculate_topological_metrics(adjacency_matrix)
+    x = torch.ones((adjacency_matrix.shape[0],1))
+    # x = calculate_topological_metrics(adjacency_matrix)
 
     # Create Data object
     data = Data(
@@ -251,8 +252,14 @@ class GraphDataModule(pl.LightningDataModule):
                 lr_graphs.append(lr_graph)
         return lr_graphs
 
+    def self_train_dataloader(self) -> UpscaledGraphDataLoader:
+        return UpscaledGraphDataLoader(self.train_dataset[0], self.train_dataset[0], batch_size=self.batch_size)
+
     def train_dataloader(self) -> UpscaledGraphDataLoader:
         return UpscaledGraphDataLoader(self.train_dataset[0], self.train_dataset[1], batch_size=self.batch_size)
+
+    def self_val_dataloader(self) -> UpscaledGraphDataLoader:
+        return UpscaledGraphDataLoader(self.val_dataset[0], self.val_dataset[0], batch_size=self.batch_size)
 
     def val_dataloader(self) -> UpscaledGraphDataLoader:
         return UpscaledGraphDataLoader(self.val_dataset[0], self.val_dataset[1], batch_size=self.batch_size)

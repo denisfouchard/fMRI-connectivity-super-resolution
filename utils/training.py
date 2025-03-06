@@ -7,7 +7,6 @@ import torch.nn as nn
 from torch_geometric.data import Data
 from torch_geometric.utils import to_dense_adj
 
-from utils.metrics import evaluation_metrics
 
 # Assuming metrics.py is adapted for PyG data format
 # from metrics import evaluation_metrics
@@ -29,6 +28,7 @@ def train_model(
     lr_scheduler=None,
     criterion=None,
     skip=False,
+    device="cpu",
 ):
     """
     Train the model, validate every 'validate_every' epochs, and pick the

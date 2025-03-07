@@ -260,8 +260,8 @@ class GraphUpsampler(nn.Module):
         self.m_nodes = m_nodes
 
         # Message passing layers
-        self.conv1 = GAT(in_dim, hidden_dim, act, drop_p)
-        self.conv2 = GAT(hidden_dim, hidden_dim, act, drop_p)
+        self.conv1 = GT(in_dim, hidden_dim, act, drop_p)
+        self.conv2 = GT(hidden_dim, hidden_dim, act, drop_p)
 
         # MLP for new node generation
         self.upsample_mlp = nn.Linear(n_nodes, m_nodes)
@@ -302,7 +302,7 @@ class GraphUpsampler(nn.Module):
 
 class GraphUnet(nn.Module):
 
-    def __init__(self, ks, n_nodes, m_nodes, dim, act, drop_p, heads=1):
+    def __init__(self, ks, n_nodes, m_nodes, dim, act, drop_p, heads=4):
         super(GraphUnet, self).__init__()
         self.ks = ks
         self.dim = dim
@@ -322,15 +322,15 @@ class GraphUnet(nn.Module):
         self.l_n = len(ks)
         for k in ks:
             out_dim = int(dim / k)
-            self.down_gcns.append(GAT(dim, out_dim, act, drop_p, heads))
-            self.up_gcns.append(GAT(out_dim, dim, act, drop_p, heads))
+            self.down_gcns.append(GT(dim, out_dim, act, drop_p, heads))
+            self.up_gcns.append(GT(out_dim, dim, act, drop_p, heads))
             self.pools.append(Pool(k, out_dim, drop_p))
             self.unpools.append(Unpool(dim, dim, drop_p))
             dim = out_dim
 
         self.up_gcns = self.up_gcns[::-1]
         # self.node_features = nn.Parameter(torch.randn(n_nodes, dim))
-        self.bottom_gcn = GAT(dim, dim, act, drop_p)
+        self.bottom_gcn = GT(dim, dim, act, drop_p)
 
     @property
     def device(self):
@@ -435,10 +435,10 @@ class GraphUnet(nn.Module):
         return A_upsampled, A_history, A_recon_history
 
 
-class GAT(nn.Module):
+class GT(nn.Module):
 
-    def __init__(self, in_dim, out_dim, act, p, heads=1):
-        super(GAT, self).__init__()
+    def __init__(self, in_dim, out_dim, act, p, heads=4):
+        super(GT, self).__init__()
         self.act = act
         self.gat = TransformerConv(
             in_dim, out_dim, heads=heads, dropout=p, edge_dim=1, concat=False
@@ -547,13 +547,19 @@ def predict(model, dataloader, X_test=None):
 
 
 def mse_loss(
-    A_true, A_pred, A_hist=None, A_recon_hist=None, intermediate_losses: bool = False
+    A_true, A_pred, A_hist=None, A_recon_hist=None, intermediate_losses: bool = True
 ):
     loss = F.mse_loss(A_true, A_pred)
+
     # Add lapaclacian loss
     L_true = torch.diag(A_true.sum(dim=1)) - A_true
     L_pred = torch.diag(A_pred.sum(dim=1)) - A_pred
-    loss += 0.2 * F.mse_loss(L_true, L_pred)
+
+    # MSE on eigenvectors of Laplacian
+    eigvals_true, eigvecs_true = torch.linalg.eigh(L_true)
+    eigvals_pred, eigvecs_pred = torch.linalg.eigh(L_pred)
+
+    loss += F.mse_loss(eigvecs_true, eigvecs_pred)
 
     if intermediate_losses:
         i = 1
@@ -570,7 +576,7 @@ if __name__ == "__main__":
     torch.cuda.empty_cache()
 
     model = GraphUnet(
-        ks=[0.2, 0.2, 0.2],
+        ks=[0.5, 0.5, 0.5, 0.5],
         n_nodes=160,
         m_nodes=268,
         dim=15,
@@ -609,7 +615,7 @@ if __name__ == "__main__":
         val_dataloader=data_module.val_dataloader(),
         train_node_features=train_node_features,
         val_node_features=val_node_features,
-        num_epochs=200,
+        num_epochs=50,
         lr=0.01,
         validate_every=1,
         patience=3,

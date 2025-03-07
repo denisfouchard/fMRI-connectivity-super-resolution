@@ -96,6 +96,7 @@ def train_model(
     best_val_loss = torch.inf
     best_model_state_dict = None
     val_loss = 0.0
+    val_mae = 0.0
 
     progress_bar = tqdm(range(num_epochs))
     for epoch in progress_bar:
@@ -123,7 +124,7 @@ def train_model(
             )
             loss.backward()
 
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
             # Record training loss
@@ -136,6 +137,7 @@ def train_model(
         if (epoch + 1) % validate_every == 0 or (epoch + 1) == num_epochs:
             model.eval()
             val_loss = 0.0
+            val_mae = 0.0
             with torch.no_grad():
                 for i, batch in enumerate(val_dataloader):
                     inputs, targets = batch
@@ -152,7 +154,10 @@ def train_model(
                         intermediate_losses,
                     ).item()
 
+                    val_mae += F.l1_loss(outputs, targets.to(model.device)).item()
+
             val_loss /= len(val_dataloader)
+            val_mae /= len(val_dataloader)
             val_loss_history.append(val_loss)
             scheduler.step(val_loss)
 
@@ -168,7 +173,7 @@ def train_model(
                 break
 
         progress_bar.set_postfix(
-            {"train_loss": avg_loss, "val_loss": val_loss, "lr": lr}
+            {"train_loss": avg_loss, "val_loss": val_loss, "lr": lr, "val_mae": val_mae}
         )
 
     # If we have a best model, load it
@@ -229,13 +234,7 @@ def reconstruct_adjacency(X, threshold=0.2):
     """
     X_norm = X
     # Compute cosine similarity matrix
-    adj = F.relu(X_norm @ X_norm.T)  # Values in range [-1, 1]
-
-    # adj = torch.sigmoid(adj)
-
-    # Apply sparsification: Keep only values above threshold
-    # adj = torch.where(adj > threshold, adj, torch.zeros_like(adj))
-
+    adj = F.sigmoid(X_norm @ X_norm.T)  # Values in range [-1, 1]
     return adj
 
 
@@ -549,10 +548,39 @@ def predict(model, dataloader, X_test=None):
     submission_df.to_csv("outputs/unet/submission.csv", index=False)
 
 
-def mse_loss(
-    A_true, A_pred, A_hist=None, A_recon_hist=None, intermediate_losses: bool = False
+@torch.no_grad()
+def predict(model, dataloader, X_test=None):
+    model.eval()
+
+    preds = []
+    progress_bar = tqdm(enumerate(dataloader), total=len(dataloader))
+    progress_bar.set_description("Predicting...")
+    for i, batch in progress_bar:
+
+        inputs = batch.squeeze(0)
+        inputs.to(model.device)
+        X = X_test[i] if X_test is not None else None
+        outputs = model(inputs, X=X)
+        preds.append(outputs[0].detach().cpu().numpy())
+
+    # Vectorize matrices
+    preds_v = [MatrixVectorizer.vectorize(p) for p in preds]
+    preds_v = np.array(preds_v)
+
+    # Submission format
+    submission_df = pd.DataFrame(
+        {"ID": range(1, len(preds_v.flatten()) + 1), "Predicted": preds_v.flatten()}
+    )
+    submission_df.to_csv("outputs/gat/submission.csv", index=False)
+    return torch.tensor(preds)
+
+
+def loss(
+    A_true, A_pred, A_hist=None, A_recon_hist=None, intermediate_losses: bool = True
 ):
     loss = F.mse_loss(A_true, A_pred)
+    loss += 0.5 * F.l1_loss(A_true, A_pred)
+
     if intermediate_losses:
         i = 1
         for A, A_recon in zip(A_hist, A_recon_hist[::-1]):
@@ -568,6 +596,10 @@ if __name__ == "__main__":
     train_dataloader = data_module.train_dataloader()
     # Get first batch
     batch = next(iter(train_dataloader))
+
+    from slim import create_test_dataloader
+
+    test_dataloader = create_test_dataloader(data_dir="./data", batch_size=1)
 
     # Define the model, loss function, and optimizer
 
@@ -606,9 +638,6 @@ if __name__ == "__main__":
             for A in tqdm(data_module.val_dataloader())
         ]
 
-        from slim import create_test_dataloader
-
-        test_dataloader = create_test_dataloader(data_dir="./data", batch_size=1)
         X_val = [
             model.build_node_features(A[0].squeeze(0)) for A in tqdm(test_dataloader)
         ]
@@ -625,11 +654,11 @@ if __name__ == "__main__":
         val_dataloader=data_module.val_dataloader(),
         train_node_features=train_node_features,
         val_node_features=val_node_features,
-        num_epochs=200,
-        lr=2e-4,
+        num_epochs=20,
+        lr=0.001,
         validate_every=1,
-        patience=5,
-        criterion=mse_loss,
+        patience=2,
+        criterion=loss,
         intermediate_losses=True,
         skip=False,
     )

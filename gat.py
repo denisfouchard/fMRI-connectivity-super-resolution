@@ -116,6 +116,7 @@ def train_model(
     best_val_loss = torch.inf
     best_model_state_dict = None
     val_loss = 0.0
+    val_mae = 0.0
 
     progress_bar = tqdm(range(num_epochs))
     for epoch in progress_bar:
@@ -153,6 +154,7 @@ def train_model(
         if (epoch + 1) % validate_every == 0 or (epoch + 1) == num_epochs:
             model.eval()
             val_loss = 0.0
+            val_mae = 0.0
             with torch.no_grad():
                 for i, batch in enumerate(val_dataloader):
                     inputs, targets = batch
@@ -169,7 +171,10 @@ def train_model(
                         targets.to(model.device),
                     ).item()
 
+                    val_mae += F.l1_loss(outputs, targets.to(model.device)).item()
+
             val_loss /= len(val_dataloader)
+            val_mae /= len(val_dataloader)
             val_loss_history.append(val_loss)
             scheduler.step(val_loss)
 
@@ -185,7 +190,7 @@ def train_model(
                 break
 
         progress_bar.set_postfix(
-            {"train_loss": avg_loss, "val_loss": val_loss, "lr": lr}
+            {"train_loss": avg_loss, "val_loss": val_loss, "lr": lr, "mae": val_mae}
         )
 
     # If we have a best model, load it
@@ -338,21 +343,17 @@ class GraphTransformerUpscaler(nn.Module):
         # Apply Transformer layers
         for layer in self.layers:
             x = layer.forward(x=x, edge_index=edge_index, edge_attr=edge_attr) + x
-            A = torch.mm(x, x.T)
-            edge_index, edge_attr = dense_to_sparse(A)
-            edge_attr = edge_attr.unsqueeze(1)
+            A = torch.mm(x, x.T) - torch.eye(x.shape[0]).to(x.device)
+            # edge_index, edge_attr = dense_to_sparse(A)
+            # edge_attr = edge_attr.unsqueeze(1)
 
         # Normalize node features
         x_up = self.upsample_proj(x.T).T
-        # print(x_up.mean(), x_up.std())
-
+        x_up = F.relu(x_up)
         # Project back to original dimension
-        A_pred = torch.mm(x_up, x_up.T)
+        A_pred = torch.mm(x_up, x_up.T) - torch.eye(x_up.shape[0]).to(x_up.device)
         # A = graph_spectral_upsample(A, new_size=268)
         # A_pred = differentiable_corrcoef(x_up)
-
-        A_pred = torch.relu(A_pred)
-        # print(A_pred.mean(), A_pred.std())
         return A_pred
 
 
@@ -361,8 +362,11 @@ def criterion(
     A_pred,
 ):
     # Compute laplacian loss
+    A_pred_ = A_pred - torch.eye(A_pred.shape[0]).to(A_pred.device)
+    A_true_ = A_true - torch.eye(A_true.shape[0]).to(A_true.device)
 
-    return F.mse_loss(A_pred, A_true)
+    loss = F.mse_loss(A_pred_, A_true_) + 1e-3 * F.l1_loss(A_pred_, A_true_)
+    return loss
 
 
 @torch.no_grad()
@@ -381,15 +385,15 @@ def predict(model, dataloader, X_test=None):
         preds.append(outputs.detach().cpu().numpy())
 
     # Vectorize matrices
-    preds = [MatrixVectorizer.vectorize(p) for p in preds]
-    preds = np.array(preds)
+    preds_v = [MatrixVectorizer.vectorize(p) for p in preds]
+    preds_v = np.array(preds_v)
 
     # Submission format
-    print(preds.shape)
     submission_df = pd.DataFrame(
-        {"ID": range(1, len(preds.flatten()) + 1), "Predicted": preds.flatten()}
+        {"ID": range(1, len(preds_v.flatten()) + 1), "Predicted": preds_v.flatten()}
     )
     submission_df.to_csv("outputs/gat/submission.csv", index=False)
+    return torch.tensor(np.array(preds))
 
 
 if __name__ == "__main__":
@@ -403,15 +407,17 @@ if __name__ == "__main__":
     # Get first batch
     batch = next(iter(train_dataloader))
 
+    print(torch.diag(batch[0]).mean())
+
     # Define the model
     in_dim = batch[0].shape[1]
     out_dim = batch[1].shape[1]
     dim = 15
     model = GraphTransformerUpscaler(
-        in_dim=dim, hidden_dim=64, num_layers=4, num_heads=4
+        in_dim=dim, hidden_dim=32, num_layers=7, num_heads=2
     )
-    model.to(torch.device("cuda:2"))
-    # model.load_state_dict(torch.load("unet-26-02.pth"))
+    model.to(torch.device("cuda:1"))
+    # model.load_state_dict(torch.load("outputs/gat/graph_transformer_15.pth"))
 
     if not os.path.exists("data/test_node_features_15.pt"):
         print("Computing train node features...")
@@ -446,16 +452,16 @@ if __name__ == "__main__":
         train_node_features=train_node_features,
         val_node_features=val_node_features,
         num_epochs=200,
-        lr=2e-4,
+        lr=0.001,
         validate_every=1,
-        patience=3,
+        patience=2,
         criterion=criterion,
     )
 
     # Save the model
-    torch.save(model.state_dict(), "outputs/gat/graph_transformer_15.pth")
+    torch.save(model.state_dict(), "outputs/gat/graph_transformer_sq_15.pth")
 
     # Evaluate the model
     print("Evaluating model...")
     test_dataloader = create_test_dataloader(data_dir="./data", batch_size=1)
-    predict(model, test_dataloader, X_test=X_val)
+    preds = predict(model, test_dataloader, X_test=X_val)

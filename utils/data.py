@@ -111,8 +111,10 @@ class GraphDataModule(pl.LightningDataModule):
         batch_size: int = 32,
         p_val: float = 0.2,
         num_workers: int = 10,
+        k_folds: int = 1,
     ):
         super().__init__()
+        self.k_folds = k_folds
         self.num_workers = num_workers
         self.hr_train = csv_to_tensor(os.path.join(data_dir, "hr_train.csv"))
         self.lr_train = csv_to_tensor(os.path.join(data_dir, "lr_train.csv"))
@@ -124,20 +126,28 @@ class GraphDataModule(pl.LightningDataModule):
         # Shuffle and split the training data into training and validation sets
         num_train = len(self.lr_train)
         indices = torch.randperm(num_train)
-        split = int(num_train * (1 - self.p_val))
-        train_indices, val_indices = indices[:split], indices[split:]
+        val_size = int(num_train * self.p_val)
 
-        self.lr_train, self.lr_val = (
-            self.lr_train[train_indices],
-            self.lr_train[val_indices],
-        )
-        self.hr_train, self.hr_val = (
-            self.hr_train[train_indices],
-            self.hr_train[val_indices],
-        )
+        self.train_datasets = []
+        self.val_datasets = []
 
-        self.train_dataset = self._get_data(lr_data=self.lr_train, hr_data=self.hr_train)
-        self.val_dataset = self._get_data(lr_data=self.lr_val, hr_data=self.hr_val)
+        for k in range(self.k_folds):
+            split_start = k * val_size
+            split_end = (k+1) * val_size
+            val_indices = indices[split_start:split_end]
+            train_indices = torch.concat([indices[:split_start],indices[split_end:]])
+            lr_train, lr_val = (
+                self.lr_train[train_indices],
+                self.lr_train[val_indices],
+            )
+            hr_train, hr_val = (
+                self.hr_train[train_indices],
+                self.hr_train[val_indices],
+            )
+
+            self.train_datasets.append(self._get_data(lr_data=lr_train, hr_data=hr_train))
+            self.val_datasets.append(self._get_data(lr_data=lr_val, hr_data=hr_val))
+
         self.test_dataset = self._get_test_data(lr_data=self.lr_test)
 
     @staticmethod
@@ -183,10 +193,17 @@ class GraphDataModule(pl.LightningDataModule):
         return lr_graphs
 
     def train_dataloader(self) -> UpscaledGraphDataLoader:
-        return UpscaledGraphDataLoader(self.train_dataset[0], self.train_dataset[1], batch_size=self.batch_size)
+        return UpscaledGraphDataLoader(self.train_datasets[0][0], self.train_datasets[0][1], batch_size=self.batch_size)
 
     def val_dataloader(self) -> UpscaledGraphDataLoader:
-        return UpscaledGraphDataLoader(self.val_dataset[0], self.val_dataset[1], batch_size=self.batch_size)
+        return UpscaledGraphDataLoader(self.val_datasets[0][0], self.val_datasets[0][1], batch_size=self.batch_size)
+
+
+    def train_dataloaders(self) -> List[UpscaledGraphDataLoader]:
+        return [UpscaledGraphDataLoader(self.train_datasets[i][0], self.train_datasets[i][1], batch_size=self.batch_size) for i in range(len(self.val_datasets))]
+
+    def val_dataloaders(self) -> List[UpscaledGraphDataLoader]:
+        return [UpscaledGraphDataLoader(self.val_datasets[i][0], self.val_datasets[i][1], batch_size=self.batch_size) for i in range(len(self.val_datasets))]
 
     def test_dataloader(self) -> DataLoader:
         return DataLoader(self.test_dataset, batch_size=self.batch_size)

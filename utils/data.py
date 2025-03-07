@@ -126,7 +126,7 @@ class GraphDataModule(pl.LightningDataModule):
         # Shuffle and split the training data into training and validation sets
         num_train = len(self.lr_train)
         indices = torch.randperm(num_train)
-        val_size = int(num_train * (1 - self.p_val))
+        val_size = int(num_train * self.p_val)
 
         self.train_datasets = []
         self.val_datasets = []
@@ -135,7 +135,7 @@ class GraphDataModule(pl.LightningDataModule):
             split_start = k * val_size
             split_end = (k+1) * val_size
             val_indices = indices[split_start:split_end]
-            train_indices = indices[:split_start] + indices[split_end:]
+            train_indices = torch.concat([indices[:split_start],indices[split_end:]])
             lr_train, lr_val = (
                 self.lr_train[train_indices],
                 self.lr_train[val_indices],
@@ -193,12 +193,17 @@ class GraphDataModule(pl.LightningDataModule):
         return lr_graphs
 
     def train_dataloader(self) -> UpscaledGraphDataLoader:
-        for i in range(len(self.train_datasets)):
-            yield UpscaledGraphDataLoader(self.train_datasets[i][0], self.train_datasets[i][1], batch_size=self.batch_size)
+        return UpscaledGraphDataLoader(self.train_datasets[0][0], self.train_datasets[0][1], batch_size=self.batch_size)
 
     def val_dataloader(self) -> UpscaledGraphDataLoader:
-        for i in range(len(self.val_datasets)):
-            yield UpscaledGraphDataLoader(self.val_datasets[i][0], self.val_datasets[i][1], batch_size=self.batch_size)
+        return UpscaledGraphDataLoader(self.val_datasets[0][0], self.val_datasets[0][1], batch_size=self.batch_size)
+
+
+    def train_dataloaders(self) -> List[UpscaledGraphDataLoader]:
+        return [UpscaledGraphDataLoader(self.train_datasets[i][0], self.train_datasets[i][1], batch_size=self.batch_size) for i in range(len(self.val_datasets))]
+
+    def val_dataloaders(self) -> List[UpscaledGraphDataLoader]:
+        return [UpscaledGraphDataLoader(self.val_datasets[i][0], self.val_datasets[i][1], batch_size=self.batch_size) for i in range(len(self.val_datasets))]
 
     def test_dataloader(self) -> DataLoader:
         return DataLoader(self.test_dataset, batch_size=self.batch_size)

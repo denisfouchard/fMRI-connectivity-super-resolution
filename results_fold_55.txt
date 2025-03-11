@@ -1,0 +1,8 @@
+MAE: 0.18714204
+PCC: 0.24905959
+Jensen-Shannon Distance: 0.34699193
+Average KL Divergence on weight distributions: 15.705938576056004
+Average MAE betweenness centrality: 0.0190706752837149
+Average MAE eigenvector centrality: 0.016182166064907084
+Average MAE PageRank centrality: 0.0006592548558454466
+Average MAE core-periphery structure: 0.03253851566006781

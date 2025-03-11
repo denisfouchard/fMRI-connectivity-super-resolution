@@ -90,6 +90,8 @@ class SLIMDataModule(pl.LightningDataModule):
         split = int(num_train * (1 - self.p_val))
         train_indices, val_indices = indices[:split], indices[split:]
 
+        self.full_dataset = SLIMDataset(lr_data=self.lr_train, hr_data=self.hr_train)
+        
         self.lr_train, self.lr_val = (
             self.lr_train[train_indices],
             self.lr_train[val_indices],
@@ -98,7 +100,7 @@ class SLIMDataModule(pl.LightningDataModule):
             self.hr_train[train_indices],
             self.hr_train[val_indices],
         )
-
+        
         self.train_dataset = SLIMDataset(lr_data=self.lr_train, hr_data=self.hr_train)
         self.val_dataset = SLIMDataset(lr_data=self.lr_val, hr_data=self.hr_val)
 

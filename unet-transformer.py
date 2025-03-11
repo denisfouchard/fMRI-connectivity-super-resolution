@@ -15,6 +15,9 @@ import numpy as np
 import networkx as nx
 from slim import SLIMDataModule
 import torch.nn as nn
+from sklearn.model_selection import KFold
+from slim import create_test_dataloader
+from torch.utils.data import DataLoader, Subset
 
 
 def symmetric_normalize(A_tilde):
@@ -520,40 +523,57 @@ def loss(
 
 
 if __name__ == "__main__":
-    import os
 
-    data_module = SLIMDataModule(data_dir="./data", batch_size=1)
-    torch.cuda.empty_cache()
+    full_dataset = SLIMDataModule(data_dir="./data", batch_size=1).full_dataset
 
-    model = GraphUnet(
-        ks=[0.5, 0.5, 0.5],
-        n_nodes=160,
-        m_nodes=268,
-        dim=128,
-        act=torch.relu,
-        drop_p=0.1,
-    )
-    model.to(torch.device("cuda:2"))
-    from slim import create_test_dataloader
+    
+    # Initialize 3-fold cross validation
+    kf = KFold(n_splits=3, shuffle=True, random_state=42)
+    
+    all_test_predictions = []
+    all_test_ground_truths = []
+    
+    # Perform 3-fold cross-validation
+    for fold, (train_idx, val_idx) in enumerate(kf.split(full_dataset)):
+        print(f"Training fold {fold+1}/3...")
+        
+        # Clear CUDA cache between folds
+        torch.cuda.empty_cache()
+        
+        # Create train and validation dataloaders for this fold
+        train_subset = Subset(full_dataset, train_idx)
+        val_subset = Subset(full_dataset, val_idx)
+        
+        train_dataloader = DataLoader(train_subset, batch_size=8, shuffle=True)
+        val_dataloader = DataLoader(val_subset, batch_size=8, shuffle=False)
+        
+        model = GraphUnet(
+            ks=[0.5, 0.5, 0.5],
+            n_nodes=160,
+            m_nodes=268,
+            dim=128,
+            act=torch.relu,
+            drop_p=0.1,
+        )
+        model.to(torch.device("cuda:2"))
 
-    test_dataloader = create_test_dataloader(data_dir="./data", batch_size=1)
+        train_losses, val_losses, lr, _ = train_model(
+            model=model,
+            train_dataloader=train_dataloader,
+            val_dataloader=val_dataloader,
+            num_epochs=50,
+            lr=0.001,
+            validate_every=1,
+            patience=3,
+            criterion=loss,
+            intermediate_losses=True,
+            skip=False,
+        )
 
-    train_losses, val_losses, lr, _ = train_model(
-        model=model,
-        train_dataloader=data_module.train_dataloader(),
-        val_dataloader=data_module.val_dataloader(),
-        #train_node_features=train_node_features,
-        #val_node_features=val_node_features,
-        num_epochs=50,
-        lr=0.001,
-        validate_every=1,
-        patience=3,
-        criterion=loss,
-        intermediate_losses=True,
-        skip=False,
-    )
+        model.eval()
+        with torch.no_grad():
+            
+        
 
-    # Save model state dict
-    torch.save(model.state_dict(), "outputs/unet/unet-transformer-03-03.pt")
 
-    predict(model, test_dataloader, X_test=X_val)
+

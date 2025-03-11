@@ -18,8 +18,32 @@ import torch.nn as nn
 from sklearn.model_selection import KFold
 from slim import create_test_dataloader
 from torch.utils.data import DataLoader, Subset
+from MatrixVectorizer import MatrixVectorizer
+import pandas as pd
+
 
 from utils.evaluation import print_metrics
+import random
+
+# Set a fixed random seed for reproducibility across multiple libraries
+random_seed = 42
+random.seed(random_seed)
+np.random.seed(random_seed)
+torch.manual_seed(random_seed)
+
+# Check for CUDA (GPU support) and set device accordingly
+if torch.cuda.is_available():
+    device = torch.device("cuda")
+    print("CUDA is available. Using GPU.")
+    torch.cuda.manual_seed(random_seed)
+    torch.cuda.manual_seed_all(random_seed)  # For multi-GPU setups
+    # Additional settings for ensuring reproducibility on CUDA
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+else:
+    device = torch.device("cpu")
+    print("CUDA not available. Using CPU.")
+
 
 
 def symmetric_normalize(A_tilde):
@@ -38,14 +62,6 @@ def symmetric_normalize(A_tilde):
     D_inv = torch.diag(torch.pow(d, -0.5))
     return D_inv @ A_tilde @ D_inv
 
-
-
-
-def batch_normalize(batch):
-    batch_n = torch.zeros_like(batch)
-    for i, A in enumerate(batch):
-        batch_n[i] = symmetric_normalize(A + torch.eye(n=A.shape[0]))
-    return batch_n
 
 
 def get_lr(optimizer):
@@ -280,10 +296,8 @@ class GraphUpsampler(nn.Module):
         - Upsampled node features [new_num_nodes, in_dim]
         """
 
-        # Generate new nodes by transforming existing ones
-        X_upsampled = self.upsample_mlp(X.T).T  # [num_nodes, in_dim]
-        X_upsampled = F.softmax(X_upsampled)
-        # Concatenate old and new nodes
+        X_upsampled = self.upsample_mlp(X.T).T 
+        X_upsampled = F.softmax(X_upsampled, dim=1)
 
         A_upsampled = reconstruct_adjacency(X=X_upsampled)
 
@@ -351,7 +365,7 @@ class GraphUnet(nn.Module):
     ):
 
         A_ = A + torch.eye(A.shape[0])
-        A = symmetric_normalize(A)
+        A_ = symmetric_normalize(A_)
         A_ = A_.to(self.device)
 
         if X is None:
@@ -456,25 +470,7 @@ def top_k_graph(scores, A, X, k):
     return A_pooled, X_pooled, idx
 
 
-def symmetric_normalize(A_tilde):
-    """
-    Performs symmetric normalization of A_tilde (Adj. matrix with self loops):
-      A_norm = D^{-1/2} * A_tilde * D^{-1/2}
-    Where D_{ii} = sum of row i in A_tilde.
 
-    A_tilde (N, N): Adj. matrix with self loops
-    Returns:
-      A_norm : (N, N)
-    """
-
-    eps = 1e-5
-    d = A_tilde.sum(dim=1) + eps
-    D_inv = torch.diag(torch.pow(d, -0.5))
-    return D_inv @ A_tilde @ D_inv
-
-
-from MatrixVectorizer import MatrixVectorizer
-import pandas as pd
 
 
 @torch.no_grad()
@@ -510,7 +506,7 @@ def loss(
     # Remove diagonal from A_true and A_pred
     A_true_ = A_true - torch.diag(torch.diag(A_true))
     A_pred_ = A_pred - torch.diag(torch.diag(A_pred))
-    loss = F.mse_loss(A_true_, A_pred_)
+    loss = F.mse_loss(A_true_, A_pred_) 
 
     if intermediate_losses:
         i = 1
@@ -555,14 +551,14 @@ if __name__ == "__main__":
             act=torch.relu,
             drop_p=0.01,
         )
-        model.to(torch.device("cuda:1"))
+        model.to(torch.device("cuda:2"))
 
         train_losses, val_losses, lr, _ = train_model(
             model=model,
             train_dataloader=train_dataloader,
             val_dataloader=val_dataloader,
             num_epochs=100,
-            lr=0.01,
+            lr=0.001,
             validate_every=1,
             patience=10,
             criterion=loss,
@@ -585,5 +581,5 @@ if __name__ == "__main__":
                 gt_adj.append(targets.detach().cpu().numpy())
                 pred_adj.append(outputs.detach().cpu().numpy())
 
-        print_metrics(gt_adj, pred_adj)
+        print_metrics(gt_adj, pred_adj, fold)
   

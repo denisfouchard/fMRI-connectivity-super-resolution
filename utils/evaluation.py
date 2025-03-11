@@ -10,7 +10,7 @@ from tqdm import tqdm
 from utils.matrix_vectorizer import MatrixVectorizer
 
 
-def print_metrics(gt_matrices, pred_matrices):
+def print_metrics(gt_matrices, pred_matrices, fold_i):
 
 
     # Initialize lists to store MAEs for each centrality measure
@@ -119,6 +119,16 @@ def print_metrics(gt_matrices, pred_matrices):
     print("Average MAE eigenvector centrality:", avg_mae_ec)
     print("Average MAE PageRank centrality:", avg_mae_pc)
     print("Average MAE core-periphery structure:", avg_mae_cp)
+    # Write results to file
+    with open(f"results_fold_{i}.txt", "w") as f:
+        f.write("MAE: " + str(mae) + "\n")
+        f.write("PCC: " + str(pcc) + "\n")
+        f.write("Jensen-Shannon Distance: " + str(js_dis) + "\n")
+        f.write("Average KL Divergence on weight distributions: " + str(avg_kl_div_weights) + "\n")
+        f.write("Average MAE betweenness centrality: " + str(avg_mae_bc) + "\n")
+        f.write("Average MAE eigenvector centrality: " + str(avg_mae_ec) + "\n")
+        f.write("Average MAE PageRank centrality: " + str(avg_mae_pc) + "\n")
+        f.write("Average MAE core-periphery structure: " + str(avg_mae_cp) + "\n")
 
 
 def compute_weighted_kcore(graph):

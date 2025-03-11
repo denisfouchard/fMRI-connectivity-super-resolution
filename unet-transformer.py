@@ -15,30 +15,8 @@ import numpy as np
 import networkx as nx
 from slim import SLIMDataModule
 import torch.nn as nn
+from MatrixVectorizer import MatrixVectorizer
 
-
-def symmetric_normalize(A_tilde):
-    """
-    Performs symmetric normalization of A_tilde (Adj. matrix with self loops):
-      A_norm = D^{-1/2} * A_tilde * D^{-1/2}
-    Where D_{ii} = sum of row i in A_tilde.
-
-    A_tilde (N, N): Adj. matrix with self loops
-    Returns:
-      A_norm : (N, N)
-    """
-
-    eps = 1e-5
-    d = A_tilde.sum(dim=1) + eps
-    D_inv = torch.diag(torch.pow(d, -0.5))
-    return D_inv @ A_tilde @ D_inv
-
-
-def batch_normalize(batch):
-    batch_n = torch.zeros_like(batch)
-    for i, A in enumerate(batch):
-        batch_n[i] = symmetric_normalize(A + torch.eye(n=A.shape[0]))
-    return batch_n
 
 
 def get_lr(optimizer):
@@ -57,7 +35,7 @@ def train_model(
     validate_every=1,
     patience=10,
     criterion=None,
-    intermediate_losses=False,
+    intermediate_losses=True,
     skip=False,
 ):
     """
@@ -194,33 +172,9 @@ def train_model(
     return train_loss_history, val_loss_history, lr_history, best_model_state_dict
 
 
-@torch.no_grad()
-def evaluate_model(model, dataloader):
-    """
-    Runs forward pass, calculates binary predictions (threshold=0.5),
-    and returns the accuracy score.
-    """
-    from metrics import evaluation_metrics
-
-    model.eval()
-
-    preds = []
-    true = []
-    for batch in dataloader:
-        inputs, targets = batch
-        inputs = inputs.squeeze(0)
-        targets = targets.squeeze(0)
-        inputs.to(model.device)
-        outputs, _, _ = model(inputs)
-        preds.append(outputs.detach().cpu().numpy())
-        true.append(targets.detach().cpu().numpy())
-
-    batch_metrics = evaluation_metrics(preds, true)
-
-    return batch_metrics
 
 
-def reconstruct_adjacency(X, threshold=0.2):
+def reconstruct_adjacency(X):
     """
     Reconstruct adjacency from node embeddings while preserving fMRI-like structure.
 
@@ -277,7 +231,7 @@ class GraphUpsampler(nn.Module):
 
         # Generate new nodes by transforming existing ones
         X_upsampled = self.upsample_mlp(X.T).T  # [num_nodes, in_dim]
-        X_upsampled = (X_upsampled)
+        X_upsampled = F.softmax(X_upsampled, dim=1)
         # Concatenate old and new nodes
 
         A_upsampled = reconstruct_adjacency(X=X_upsampled)
@@ -306,8 +260,8 @@ class GraphUnet(nn.Module):
         )
         self.l_n = len(ks)
         for k in ks:
-            #out_dim = int(dim / k)
-            out_dim = dim
+            out_dim = int(dim / k)
+            # out_dim = dim
             self.down_gcns.append(GT(dim, out_dim, act, drop_p, heads))
             self.up_gcns.append(GT(out_dim, dim, act, drop_p, heads))
             self.pools.append(Pool(k, out_dim, drop_p))
@@ -338,6 +292,7 @@ class GraphUnet(nn.Module):
         # Perform SVD on the adjacency matrix
         U, S, _ = torch.svd(adjacency)
         U = U[:, :dim]
+        U = U * torch.sqrt(S[:dim])
         return U
 
 
@@ -346,13 +301,13 @@ class GraphUnet(nn.Module):
     ):
         # Process A
         if threshold > 0:
-            A = torch.where(A > threshold, A, torch.zeros_like(A))
-        A = A + torch.eye(A.shape[0])
-        A = symmetric_normalize(A)
-        A = A.to(self.device)
+            A_ = torch.where(A_ > threshold, A_, torch.zeros_like(A_))
+        A_ = A + torch.eye(A.shape[0])
+        # A = symmetric_normalize(A)
+        A_ = A_.to(self.device)
 
         if X is None:
-            X = self.build_node_features(A, self.dim).to(self.device)
+            X = self.build_node_features(A_, self.dim).to(self.device)
      
 
         A_history = []
@@ -362,18 +317,18 @@ class GraphUnet(nn.Module):
         if skip:
             org_X = X.clone()
         for i in range(self.l_n):
-            X = self.down_gcns[i](A, X)
-            A_history.append(A)
+            X = self.down_gcns[i](A_, X)
+            A_history.append(A_)
             down_outs.append(X)
-            A, X, idx = self.pools[i](A, X)
+            A_, X, idx = self.pools[i](A_, X)
             indices_list.append(idx)
 
-        X = self.bottom_gcn(A, X)
+        X = self.bottom_gcn(A_, X)
         for i in range(self.l_n):
             up_idx = self.l_n - i - 1
-            A, idx = A_history[up_idx], indices_list[up_idx]
-            A, X = self.unpools[i](A, X, down_outs[up_idx], idx)
-            X = self.up_gcns[i](A, X)
+            A_, idx = A_history[up_idx], indices_list[up_idx]
+            A_, X = self.unpools[i](A_, X, down_outs[up_idx], idx)
+            X = self.up_gcns[i](A_, X)
 
             A_recon = reconstruct_adjacency(X)
             A_recon_history.append(A_recon)
@@ -384,7 +339,7 @@ class GraphUnet(nn.Module):
         if skip:
             X = X.add(org_X)
 
-        A_upsampled = self.upsampler.forward(X, A)
+        A_upsampled = self.upsampler.forward(X, A_)
 
         return A_upsampled, A_history, A_recon_history
 
@@ -470,8 +425,7 @@ def symmetric_normalize(A_tilde):
     return D_inv @ A_tilde @ D_inv
 
 
-from MatrixVectorizer import MatrixVectorizer
-import pandas as pd
+
 
 
 @torch.no_grad()
@@ -529,11 +483,11 @@ if __name__ == "__main__":
         ks=[0.5, 0.5, 0.5],
         n_nodes=160,
         m_nodes=268,
-        dim=128,
+        dim=16,
         act=torch.relu,
-        drop_p=0.1,
+        drop_p=0.01,
     )
-    model.to(torch.device("cuda:2"))
+    model.to(torch.device("cuda:0"))
     from slim import create_test_dataloader
 
     test_dataloader = create_test_dataloader(data_dir="./data", batch_size=1)
@@ -542,12 +496,12 @@ if __name__ == "__main__":
         model=model,
         train_dataloader=data_module.train_dataloader(),
         val_dataloader=data_module.val_dataloader(),
-        #train_node_features=train_node_features,
-        #val_node_features=val_node_features,
-        num_epochs=50,
-        lr=0.001,
+        # train_node_features=train_node_features,
+        # val_node_features=val_node_features,
+        num_epochs=100,
+        lr=0.01,
         validate_every=1,
-        patience=3,
+        patience=10,
         criterion=loss,
         intermediate_losses=True,
         skip=False,

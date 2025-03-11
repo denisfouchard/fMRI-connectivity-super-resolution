@@ -19,6 +19,8 @@ from sklearn.model_selection import KFold
 from slim import create_test_dataloader
 from torch.utils.data import DataLoader, Subset
 
+from utils.evaluation import print_metrics
+
 
 def symmetric_normalize(A_tilde):
     """
@@ -35,6 +37,7 @@ def symmetric_normalize(A_tilde):
     d = A_tilde.sum(dim=1) + eps
     D_inv = torch.diag(torch.pow(d, -0.5))
     return D_inv @ A_tilde @ D_inv
+
 
 
 
@@ -153,6 +156,7 @@ def train_model(
                     inputs = inputs.squeeze(0)
                     targets = targets.to(model.device)
                     targets = targets.squeeze(0)
+                    outputs, A_hist, A_recon_hist = model(A=inputs,  skip=skip)
                     outputs, A_hist, A_recon_hist = model(A=inputs,  skip=skip)
 
                     val_loss += criterion(
@@ -551,7 +555,7 @@ if __name__ == "__main__":
             act=torch.relu,
             drop_p=0.01,
         )
-        model.to(torch.device("cuda:2"))
+        model.to(torch.device("cuda:1"))
 
         train_losses, val_losses, lr, _ = train_model(
             model=model,
@@ -567,4 +571,19 @@ if __name__ == "__main__":
         )
 
         model.eval()
+        model.eval()
+        gt_adj = []
+        pred_adj = []
+        with torch.no_grad():
+            for inputs, targets in val_dataloader:
+                inputs = inputs.squeeze(0)
+                targets = targets.squeeze(0)
+
+                # Forward pass on training data
+                outputs, _, _ = model.forward(A=inputs, X=None)
+
+                gt_adj.append(targets.detach().cpu().numpy())
+                pred_adj.append(outputs.detach().cpu().numpy())
+
+        print_metrics(gt_adj, pred_adj)
   

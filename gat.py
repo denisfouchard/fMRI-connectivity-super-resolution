@@ -342,7 +342,7 @@ class GraphTransformerUpscaler(nn.Module):
 
         # Apply Transformer layers
         for layer in self.layers:
-            x = layer.forward(x=x, edge_index=edge_index, edge_attr=edge_attr) + x
+            x = layer.forward(x=x, edge_index=edge_index, edge_attr=edge_attr)
             A = torch.mm(x, x.T) - torch.eye(x.shape[0]).to(x.device)
             # edge_index, edge_attr = dense_to_sparse(A)
             # edge_attr = edge_attr.unsqueeze(1)
@@ -407,14 +407,12 @@ if __name__ == "__main__":
     # Get first batch
     batch = next(iter(train_dataloader))
 
-    print(torch.diag(batch[0]).mean())
-
     # Define the model
     in_dim = batch[0].shape[1]
     out_dim = batch[1].shape[1]
     dim = 15
     model = GraphTransformerUpscaler(
-        in_dim=dim, hidden_dim=32, num_layers=7, num_heads=2
+        in_dim=dim, hidden_dim=128, num_layers=7, num_heads=
     )
     model.to(torch.device("cuda:1"))
     # model.load_state_dict(torch.load("outputs/gat/graph_transformer_15.pth"))

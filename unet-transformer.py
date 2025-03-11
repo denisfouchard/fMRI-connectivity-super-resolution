@@ -3,11 +3,16 @@ import pandas as pd
 import torch
 import copy
 from tqdm import tqdm
-from torch_geometric.nn import GATConv, TransformerConv
+from torch_geometric.nn import GATConv, TransformerConv, GINConv
 from torch_geometric.utils import to_dense_adj, dense_to_sparse
-
-# from metrics import evaluation_metrics
-
+import torch
+from torch import Tensor
+import torch.nn.functional as F
+import torch.nn as nn
+import torch
+import torch.nn as nn
+import numpy as np
+import networkx as nx
 from slim import SLIMDataModule
 import torch.nn as nn
 
@@ -98,6 +103,7 @@ def train_model(
     best_val_loss = torch.inf
     best_model_state_dict = None
     val_loss = 0.0
+    val_mae = 0.0
 
     progress_bar = tqdm(range(num_epochs))
     for epoch in progress_bar:
@@ -125,7 +131,7 @@ def train_model(
             )
             loss.backward()
 
-            # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            #torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
             # Record training loss
@@ -138,23 +144,31 @@ def train_model(
         if (epoch + 1) % validate_every == 0 or (epoch + 1) == num_epochs:
             model.eval()
             val_loss = 0.0
+            val_mae = 0.0
             with torch.no_grad():
                 for i, batch in enumerate(val_dataloader):
                     inputs, targets = batch
                     inputs = inputs.squeeze(0)
+                    targets = targets.to(model.device)
                     targets = targets.squeeze(0)
                     X = val_node_features[i] if val_node_features is not None else None
                     outputs, A_hist, A_recon_hist = model(A=inputs, X=X, skip=skip)
 
                     val_loss += criterion(
                         outputs,
-                        targets.to(model.device),
+                        targets,
                         A_hist,
                         A_recon_hist,
                         intermediate_losses,
                     ).item()
 
+                    A = outputs - torch.diag(torch.diag(outputs)).to(model.device)
+                    A_true = targets - torch.diag(torch.diag(targets)).to(model.device)
+
+                    val_mae += F.l1_loss(A, A_true).item()
+
             val_loss /= len(val_dataloader)
+            val_mae /= len(val_dataloader)
             val_loss_history.append(val_loss)
             scheduler.step(val_loss)
 
@@ -170,7 +184,7 @@ def train_model(
                 break
 
         progress_bar.set_postfix(
-            {"train_loss": avg_loss, "val_loss": val_loss, "lr": lr}
+            {"train_loss": avg_loss, "val_loss": val_loss, "lr": lr, "val_mae": val_mae}
         )
 
     # If we have a best model, load it
@@ -206,18 +220,6 @@ def evaluate_model(model, dataloader):
     return batch_metrics
 
 
-# putting it all together - code taken from https://github.com/HongyangGao/Graph-U-Nets/tree/master
-
-import torch
-from torch import Tensor
-import torch.nn.functional as F
-import torch.nn as nn
-import torch
-import torch.nn as nn
-import numpy as np
-import networkx as nx
-
-
 def reconstruct_adjacency(X, threshold=0.2):
     """
     Reconstruct adjacency from node embeddings while preserving fMRI-like structure.
@@ -231,7 +233,7 @@ def reconstruct_adjacency(X, threshold=0.2):
     """
     X_norm = X
     # Compute cosine similarity matrix
-    adj = F.relu(X_norm @ X_norm.T)  # Values in range [-1, 1]
+    adj = F.relu((X_norm @ X_norm.T))  # Values in range [-1, 1]
 
     return adj
 
@@ -259,14 +261,10 @@ class GraphUpsampler(nn.Module):
         self.n_nodes = n_nodes
         self.m_nodes = m_nodes
 
-        # Message passing layers
-        self.conv1 = GT(in_dim, hidden_dim, act, drop_p)
-        self.conv2 = GT(hidden_dim, hidden_dim, act, drop_p)
-
         # MLP for new node generation
         self.upsample_mlp = nn.Linear(n_nodes, m_nodes)
 
-    def forward(self, X, A, refine=False):
+    def forward(self, X, A,):
         """
         Args:
         - x: Node features [num_nodes, in_dim]
@@ -279,23 +277,10 @@ class GraphUpsampler(nn.Module):
 
         # Generate new nodes by transforming existing ones
         X_upsampled = self.upsample_mlp(X.T).T  # [num_nodes, in_dim]
-        X_upsampled = F.sigmoid(X_upsampled)
+        X_upsampled = (X_upsampled)
         # Concatenate old and new nodes
 
         A_upsampled = reconstruct_adjacency(X=X_upsampled)
-
-        # Message passing to refine embeddings
-        if refine:
-            for _ in range(self.num_iterations):
-                X_upsampled = self.conv1(A_upsampled, X_upsampled)
-                X_upsampled = F.relu(X_upsampled)
-                A_upsampled = reconstruct_adjacency(X_upsampled)
-
-                X_upsampled = self.conv2(A_upsampled, X_upsampled)
-                X_upsampled = F.relu(X_upsampled)
-
-                # Reconstruct adjacency with updated embeddings
-                A_upsampled = reconstruct_adjacency(A_upsampled)
 
         return A_upsampled
 
@@ -321,7 +306,8 @@ class GraphUnet(nn.Module):
         )
         self.l_n = len(ks)
         for k in ks:
-            out_dim = int(dim / k)
+            #out_dim = int(dim / k)
+            out_dim = dim
             self.down_gcns.append(GT(dim, out_dim, act, drop_p, heads))
             self.up_gcns.append(GT(out_dim, dim, act, drop_p, heads))
             self.pools.append(Pool(k, out_dim, drop_p))
@@ -348,43 +334,12 @@ class GraphUnet(nn.Module):
         )
         return torch.stack(features, dim=0)
 
-    def build_node_features(self, adjacency: torch.Tensor) -> torch.Tensor:
-        # Build node features using topological information
+    def build_node_features(self, adjacency: torch.Tensor, dim: int) -> torch.Tensor:
+        # Perform SVD on the adjacency matrix
+        U, S, _ = torch.svd(adjacency)
+        U = U[:, :dim]
+        return U
 
-        # Compute degree matrix
-        D = torch.diag(torch.sum(adjacency, dim=1)).cpu()
-
-        # Compute Node betweenness centrality
-        G = nx.from_numpy_array(adjacency.cpu().numpy())
-        betweenness = torch.tensor(
-            list(nx.betweenness_centrality(G).values()), dtype=torch.float32
-        )
-
-        # Compute Node closeness centrality
-        closeness = torch.tensor(
-            list(nx.closeness_centrality(G).values()), dtype=torch.float32
-        )
-
-        # Compute Node clustering coefficient
-        clustering = torch.tensor(list(nx.clustering(G).values()), dtype=torch.float32)
-
-        # Compute eigenvector centrality
-        eigenvector = torch.tensor(
-            list(nx.eigenvector_centrality(G).values()), dtype=torch.float32
-        )
-
-        # Compute Laplacian eigenvecs
-        eigvals, eigvecs = torch.linalg.eigh(D - adjacency.cpu())
-        laplacian_eigenvecs = eigvecs[:, 1 : self.dim - 3]
-
-        # Concatenate all features
-        node_features = torch.stack(
-            [betweenness, closeness, clustering, eigenvector], dim=1
-        )
-        # Include Laplacian eigenvecs
-        node_features = torch.cat([node_features, laplacian_eigenvecs], dim=1)
-
-        return node_features
 
     def forward(
         self, A: torch.Tensor, skip: bool = False, threshold: float = -1, X=None
@@ -397,9 +352,8 @@ class GraphUnet(nn.Module):
         A = A.to(self.device)
 
         if X is None:
-            X = torch.randn(A.shape[0], self.dim, device=self.device)
-        else:
-            X = X.to(self.device)
+            X = self.build_node_features(A, self.dim).to(self.device)
+     
 
         A_history = []
         A_recon_history = []
@@ -437,12 +391,13 @@ class GraphUnet(nn.Module):
 
 class GT(nn.Module):
 
-    def __init__(self, in_dim, out_dim, act, p, heads=4):
+    def __init__(self, in_dim, out_dim, act, p, heads=2):
         super(GT, self).__init__()
         self.act = act
-        self.gat = TransformerConv(
-            in_dim, out_dim, heads=heads, dropout=p, edge_dim=1, concat=False
-        )
+        # self.gat = TransformerConv(
+        #     in_dim, out_dim // heads, heads=heads, dropout=p, edge_dim=1, concat=True
+        # )
+        self.gat = GATConv(in_dim, out_dim // heads, heads=heads, dropout=p, concat=True)
 
     def forward(self, A, X):
         edge_index, edge_attr = dense_to_sparse(A)
@@ -490,11 +445,11 @@ def top_k_graph(scores, A, X, k):
     # A_treshold = torch.where(A > 0.10, torch.ones_like(A), torch.zeros_like(A))
     # A_pooled = A_treshold.bool().float()
     # A_pooled = (
-    #    torch.matmul(A_pooled, A_pooled).bool().float()
+    #     torch.matmul(A_pooled, A_pooled).bool().float()
     # )  # second power to reduce chance of isolated nodes
     A_pooled = A[idx, :]
     A_pooled = A_pooled[:, idx]
-    # A_pooled = symmetric_normalize(A_pooled)
+    #A_pooled = symmetric_normalize(A_pooled)
     return A_pooled, X_pooled, idx
 
 
@@ -546,25 +501,20 @@ def predict(model, dataloader, X_test=None):
     submission_df.to_csv("outputs/unet/submission.csv", index=False)
 
 
-def mse_loss(
+def loss(
     A_true, A_pred, A_hist=None, A_recon_hist=None, intermediate_losses: bool = True
 ):
-    loss = F.mse_loss(A_true, A_pred)
-
-    # Add lapaclacian loss
-    L_true = torch.diag(A_true.sum(dim=1)) - A_true
-    L_pred = torch.diag(A_pred.sum(dim=1)) - A_pred
-
-    # MSE on eigenvectors of Laplacian
-    eigvals_true, eigvecs_true = torch.linalg.eigh(L_true)
-    eigvals_pred, eigvecs_pred = torch.linalg.eigh(L_pred)
-
-    loss += F.mse_loss(eigvecs_true, eigvecs_pred)
+    # Remove diagonal from A_true and A_pred
+    A_true_ = A_true - torch.diag(torch.diag(A_true))
+    A_pred_ = A_pred - torch.diag(torch.diag(A_pred))
+    loss = F.mse_loss(A_true_, A_pred_)
 
     if intermediate_losses:
         i = 1
         for A, A_recon in zip(A_hist, A_recon_hist[::-1]):
-            loss += F.mse_loss(A, A_recon)
+            A_ = A - torch.diag(torch.diag(A))
+            A_recon_ = A_recon - torch.diag(torch.diag(A_recon))
+            loss += F.mse_loss(A_, A_recon_)
             i += 1
     return loss
 
@@ -576,10 +526,10 @@ if __name__ == "__main__":
     torch.cuda.empty_cache()
 
     model = GraphUnet(
-        ks=[0.5, 0.5, 0.5, 0.5],
+        ks=[0.5, 0.5, 0.5],
         n_nodes=160,
         m_nodes=268,
-        dim=15,
+        dim=128,
         act=torch.relu,
         drop_p=0.1,
     )
@@ -587,39 +537,18 @@ if __name__ == "__main__":
     from slim import create_test_dataloader
 
     test_dataloader = create_test_dataloader(data_dir="./data", batch_size=1)
-    if not os.path.exists("data/test_node_features_15.pt"):
-        print("Computing train node features...")
-        train_node_features = [
-            model.build_node_features(A[0].squeeze(0))
-            for A in tqdm(data_module.train_dataloader())
-        ]
-
-        print("Computing val node features...")
-        val_node_features = [
-            model.build_node_features(A[0].squeeze(0))
-            for A in tqdm(data_module.val_dataloader())
-        ]
-        X_val = [
-            model.build_node_features(A[0].squeeze(0)) for A in tqdm(test_dataloader)
-        ]
-
-    else:
-        print("Loading node features...")
-        train_node_features = torch.load("data/train_node_features_15.pt")
-        val_node_features = torch.load("data/val_node_features_15.pt")
-        X_val = torch.load("data/test_node_features_15.pt")
 
     train_losses, val_losses, lr, _ = train_model(
         model=model,
         train_dataloader=data_module.train_dataloader(),
         val_dataloader=data_module.val_dataloader(),
-        train_node_features=train_node_features,
-        val_node_features=val_node_features,
+        #train_node_features=train_node_features,
+        #val_node_features=val_node_features,
         num_epochs=50,
-        lr=0.01,
+        lr=0.001,
         validate_every=1,
         patience=3,
-        criterion=mse_loss,
+        criterion=loss,
         intermediate_losses=True,
         skip=False,
     )

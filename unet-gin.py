@@ -232,8 +232,7 @@ def reconstruct_adjacency(X, threshold=0.2):
         adj (torch.Tensor): Reconstructed weighted adjacency matrix
     """
     X_norm = X
-    # Compute cosine similarity matrix
-    adj = F.sigmoid(X_norm @ X_norm.T)  # Values in range [-1, 1]
+    adj = F.relu(X_norm @ X_norm.T)
     return adj
 
 
@@ -323,8 +322,8 @@ class GraphUnet(nn.Module):
         for k in ks:
             # out_dim = dim
             out_dim = int(dim / k)
-            self.down_gcns.append(GCN(dim, out_dim, act, drop_p))
-            self.up_gcns.append(GCN(out_dim, dim, act, drop_p))
+            self.down_gcns.append(GIN(dim, out_dim, act, drop_p))
+            self.up_gcns.append(GIN(out_dim, dim, act, drop_p))
             self.pools.append(Pool(k, out_dim, drop_p))
             self.unpools.append(Unpool(dim, dim, drop_p))
             dim = out_dim
@@ -406,7 +405,6 @@ class GraphUnet(nn.Module):
         A_recon_history = []
         indices_list = []
         down_outs = []
-        org_A = A.clone()
         if skip:
             org_X = X.clone()
         for i in range(self.l_n):
@@ -453,21 +451,35 @@ class GCN(nn.Module):
         return X
 
 
-class GT(nn.Module):
-
-    def __init__(self, in_dim, out_dim, act, p, heads=4):
-        super(GT, self).__init__()
+class GIN(nn.Module):
+    def __init__(self, in_dim, out_dim, act, p):
+        super(GIN, self).__init__()
+        self.proj = nn.Linear(in_dim, out_dim, bias=False)
         self.act = act
-        self.gat = TransformerConv(
-            in_dim, out_dim, heads=heads, dropout=p, edge_dim=1, concat=False
-        )
+        self.drop = nn.Dropout(p=p) if p > 0.0 else nn.Identity()
+        self.eps = nn.Parameter(torch.Tensor([0.01]), requires_grad=True)
 
     def forward(self, A, X):
-        edge_index, edge_attr = dense_to_sparse(A)
-        edge_attr = edge_attr.unsqueeze(1)
-        X = self.gat(X, edge_index, edge_attr)
+        X = self.drop(X)  # they have added dropout
+        X = torch.matmul(A + self.eps * torch.eye(A.shape[0]).to(X.device), X)
+        X = self.proj(X)
         X = self.act(X)
         return X
+
+
+class GIN2(nn.Module):
+    def __init__(self, in_dim, out_dim, act, eps=0, train_eps=True):
+        super(GIN, self).__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(in_dim, out_dim), nn.ReLU(), nn.Linear(out_dim, out_dim)
+        )
+        self.eps = nn.Parameter(torch.Tensor([eps])) if train_eps else eps
+
+    def forward(self, A, X):
+        out = torch.matmul(A, X)
+        out = (1 + self.eps) * X + out
+        out = self.mlp(out)
+        return out
 
 
 class Pool(nn.Module):
@@ -594,13 +606,18 @@ def predict(model, dataloader, X_test=None):
 def loss(
     A_true, A_pred, A_hist=None, A_recon_hist=None, intermediate_losses: bool = True
 ):
-    loss = F.mse_loss(A_true, A_pred)
-    loss += 0.5 * F.l1_loss(A_true, A_pred)
+    # Remove diagonal from A_true and A_pred
+    A_true_ = A_true - torch.diag(torch.diag(A_true))
+    A_pred_ = A_pred - torch.diag(torch.diag(A_pred))
+    loss = F.mse_loss(A_true_, A_pred_)
+    loss += 0.01 * F.l1_loss(A_true_, A_pred_)
 
     if intermediate_losses:
         i = 1
         for A, A_recon in zip(A_hist, A_recon_hist[::-1]):
-            loss += F.mse_loss(A, A_recon)
+            A_ = A - torch.diag(torch.diag(A))
+            A_recon_ = A_recon - torch.diag(torch.diag(A_recon))
+            loss += F.mse_loss(A_, A_recon_)
             i += 1
     return loss
 
@@ -628,9 +645,10 @@ if __name__ == "__main__":
     dim = 15
     model = GraphUnet(
         ks=[
-            0.75,
-            0.75,
-            0.75,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
         ],
         n_nodes=in_dim,
         m_nodes=out_dim,
@@ -639,7 +657,7 @@ if __name__ == "__main__":
         drop_p=0.1,
     )
     model.to(torch.device("cuda:2"))
-    model.load_state_dict(torch.load("./outputs/unet/unet-26-02.pth"))
+    # model.load_state_dict(torch.load("./outputs/unet/unet-26-02.pth"))
 
     if not os.path.exists("data/test_node_features_15.pt"):
         print("Computing train node features...")
@@ -670,8 +688,8 @@ if __name__ == "__main__":
         val_dataloader=data_module.val_dataloader(),
         train_node_features=train_node_features,
         val_node_features=val_node_features,
-        num_epochs=20,
-        lr=0.001,
+        num_epochs=200,
+        lr=0.01,
         validate_every=1,
         patience=2,
         criterion=loss,

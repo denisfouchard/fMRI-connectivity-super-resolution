@@ -15,30 +15,37 @@ import numpy as np
 import networkx as nx
 from slim import SLIMDataModule
 import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
-import pandas as pd
-import torch
-import copy
-from tqdm import tqdm
-from torch_geometric.nn import GATConv, TransformerConv, GINConv
-from torch_geometric.utils import to_dense_adj, dense_to_sparse
-import torch
-from torch import Tensor
-import torch.nn.functional as F
-import torch.nn as nn
-import torch
-import torch.nn as nn
-import numpy as np
-import networkx as nx
-from slim import SLIMDataModule
-import torch.nn as nn
 from sklearn.model_selection import KFold
 from slim import create_test_dataloader
 from torch.utils.data import DataLoader, Subset
 
 from utils.evaluation import print_metrics
-from utils.matrix_vectorizer import MatrixVectorizer
-from utils.reproducibility import set_seed
+
+
+def symmetric_normalize(A_tilde):
+    """
+    Performs symmetric normalization of A_tilde (Adj. matrix with self loops):
+      A_norm = D^{-1/2} * A_tilde * D^{-1/2}
+    Where D_{ii} = sum of row i in A_tilde.
+
+    A_tilde (N, N): Adj. matrix with self loops
+    Returns:
+      A_norm : (N, N)
+    """
+
+    eps = 1e-5
+    d = A_tilde.sum(dim=1) + eps
+    D_inv = torch.diag(torch.pow(d, -0.5))
+    return D_inv @ A_tilde @ D_inv
+
+
+
+def batch_normalize(batch):
+    batch_n = torch.zeros_like(batch)
+    for i, A in enumerate(batch):
+        batch_n[i] = symmetric_normalize(A + torch.eye(n=A.shape[0]))
+    return batch_n
+
 
 def get_lr(optimizer):
     for param_group in optimizer.param_groups:
@@ -52,11 +59,11 @@ def train_model(
     train_node_features=None,
     val_node_features=None,
     num_epochs=100,
-    lr=0.001,
+    lr=0.01,
     validate_every=1,
-    patience=20,
+    patience=10,
     criterion=None,
-    intermediate_losses=True,
+    intermediate_losses=False,
     skip=False,
 ):
     """
@@ -117,10 +124,8 @@ def train_model(
             targets = targets.squeeze(0)
             optimizer.zero_grad()
 
-            X = train_node_features[i] if train_node_features is not None else None
-
             # Forward pass on training data
-            outputs, A_hist, A_recon_hist = model.forward(A=inputs, X=X, skip=skip)
+            outputs, A_hist, A_recon_hist = model.forward(A=inputs, skip=skip)
             loss = criterion(
                 outputs,
                 targets.to(model.device),
@@ -150,8 +155,7 @@ def train_model(
                     inputs = inputs.squeeze(0)
                     targets = targets.to(model.device)
                     targets = targets.squeeze(0)
-                    X = val_node_features[i] if val_node_features is not None else None
-                    outputs, A_hist, A_recon_hist = model(A=inputs, X=X, skip=skip)
+                    outputs, A_hist, A_recon_hist = model(A=inputs,  skip=skip)
 
                     val_loss += criterion(
                         outputs,
@@ -193,9 +197,33 @@ def train_model(
     return train_loss_history, val_loss_history, lr_history, best_model_state_dict
 
 
+@torch.no_grad()
+def evaluate_model(model, dataloader):
+    """
+    Runs forward pass, calculates binary predictions (threshold=0.5),
+    and returns the accuracy score.
+    """
+    from metrics import evaluation_metrics
+
+    model.eval()
+
+    preds = []
+    true = []
+    for batch in dataloader:
+        inputs, targets = batch
+        inputs = inputs.squeeze(0)
+        targets = targets.squeeze(0)
+        inputs.to(model.device)
+        outputs, _, _ = model(inputs)
+        preds.append(outputs.detach().cpu().numpy())
+        true.append(targets.detach().cpu().numpy())
+
+    batch_metrics = evaluation_metrics(preds, true)
+
+    return batch_metrics
 
 
-def reconstruct_adjacency(X):
+def reconstruct_adjacency(X, threshold=0.2):
     """
     Reconstruct adjacency from node embeddings while preserving fMRI-like structure.
 
@@ -252,7 +280,7 @@ class GraphUpsampler(nn.Module):
 
         # Generate new nodes by transforming existing ones
         X_upsampled = self.upsample_mlp(X.T).T  # [num_nodes, in_dim]
-        X_upsampled = F.softmax(X_upsampled, dim=1)
+        X_upsampled = F.softmax(X_upsampled)
         # Concatenate old and new nodes
 
         A_upsampled = reconstruct_adjacency(X=X_upsampled)
@@ -313,18 +341,15 @@ class GraphUnet(nn.Module):
         # Perform SVD on the adjacency matrix
         U, S, _ = torch.svd(adjacency)
         U = U[:, :dim]
-        U = U * torch.sqrt(S[:dim])
         return U
 
 
     def forward(
         self, A: torch.Tensor, skip: bool = False, threshold: float = -1, X=None
     ):
-        # Process A
-        if threshold > 0:
-            A_ = torch.where(A_ > threshold, A_, torch.zeros_like(A_))
+
         A_ = A + torch.eye(A.shape[0])
-        # A = symmetric_normalize(A)
+        A = symmetric_normalize(A)
         A_ = A_.to(self.device)
 
         if X is None:
@@ -425,7 +450,7 @@ def top_k_graph(scores, A, X, k):
     # )  # second power to reduce chance of isolated nodes
     A_pooled = A[idx, :]
     A_pooled = A_pooled[:, idx]
-    #A_pooled = symmetric_normalize(A_pooled)
+    A_pooled = symmetric_normalize(A_pooled)
     return A_pooled, X_pooled, idx
 
 
@@ -446,7 +471,8 @@ def symmetric_normalize(A_tilde):
     return D_inv @ A_tilde @ D_inv
 
 
-
+from MatrixVectorizer import MatrixVectorizer
+import pandas as pd
 
 
 @torch.no_grad()
@@ -494,47 +520,6 @@ def loss(
     return loss
 
 
-# if __name__ == "__main__":
-#     import os
-
-#     data_module = SLIMDataModule(data_dir="./data", batch_size=1)
-#     torch.cuda.empty_cache()
-
-#     model = GraphUnet(
-#         ks=[0.5, 0.5, 0.5],
-#         n_nodes=160,
-#         m_nodes=268,
-#         dim=16,
-#         act=torch.relu,
-#         drop_p=0.01,
-#     )
-#     model.to(torch.device("cuda:0"))
-#     from slim import create_test_dataloader
-
-#     test_dataloader = create_test_dataloader(data_dir="./data", batch_size=1)
-
-#     train_losses, val_losses, lr, _ = train_model(
-#         model=model,
-#         train_dataloader=data_module.train_dataloader(),
-#         val_dataloader=data_module.val_dataloader(),
-#         # train_node_features=train_node_features,
-#         # val_node_features=val_node_features,
-#         num_epochs=100,
-#         lr=0.01,
-#         validate_every=1,
-#         patience=10,
-#         criterion=loss,
-#         intermediate_losses=True,
-#         skip=False,
-#     )
-
-#     # Save model state dict
-#     torch.save(model.state_dict(), "outputs/unet/unet-transformer-03-03.pt")
-
-#     predict(model, test_dataloader, X_test=X_val)
-
-
-
 if __name__ == "__main__":
 
     full_dataset = SLIMDataModule(data_dir="./data", batch_size=1).full_dataset
@@ -549,8 +534,7 @@ if __name__ == "__main__":
     # Perform 3-fold cross-validation
     for fold, (train_idx, val_idx) in enumerate(kf.split(full_dataset)):
         print(f"Training fold {fold+1}/3...")
-        set_seed(42)
-
+        
         # Clear CUDA cache between folds
         torch.cuda.empty_cache()
         
@@ -560,11 +544,7 @@ if __name__ == "__main__":
         
         train_dataloader = DataLoader(train_subset, batch_size=1, shuffle=True)
         val_dataloader = DataLoader(val_subset, batch_size=1, shuffle=False)
-        batch = next(iter(train_dataloader))
         
-        in_dim = batch[0].shape[1]
-        out_dim = batch[1].shape[1]
-        dim = 30
         model = GraphUnet(
             ks=[0.5, 0.5, 0.5],
             n_nodes=160,
@@ -579,20 +559,16 @@ if __name__ == "__main__":
             model=model,
             train_dataloader=train_dataloader,
             val_dataloader=val_dataloader,
-            # train_node_features=train_node_features,
-            # val_node_features=val_node_features,
             num_epochs=100,
-            lr=0.001,
+            lr=0.01,
             validate_every=1,
-            patience=20,
+            patience=10,
             criterion=loss,
             intermediate_losses=True,
             skip=False,
         )
 
-        gt_adj = None
-        pred_adj = None
-
+        model.eval()
         model.eval()
         gt_adj = []
         pred_adj = []
@@ -608,8 +584,4 @@ if __name__ == "__main__":
                 pred_adj.append(outputs.detach().cpu().numpy())
 
         print_metrics(gt_adj, pred_adj)
-
-
-
-        
-
+  

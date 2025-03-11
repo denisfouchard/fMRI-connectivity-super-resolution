@@ -1,5 +1,6 @@
 from torch_geometric.nn.conv import SAGEConv, GCNConv
 import torch.nn as nn
+import torch
 
 num_nodes = 1000  # Adjust based on your dataset
 embedding_dim = 128  # Dimension of node embeddings

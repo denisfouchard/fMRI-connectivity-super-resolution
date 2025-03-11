@@ -8,7 +8,7 @@ from torch_geometric.data import Data, Batch
 from torch_geometric.loader import DataLoader
 from typing import List, Tuple
 from tqdm import tqdm
-from MatrixVectorizer import MatrixVectorizer
+from utils.matrix_vectorizer import MatrixVectorizer
 
 
 def calculate_topological_metrics(

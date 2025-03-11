@@ -18,7 +18,7 @@ import torch.nn as nn
 from sklearn.model_selection import KFold
 from slim import create_test_dataloader
 from torch.utils.data import DataLoader, Subset
-from MatrixVectorizer import MatrixVectorizer
+from utils.matrix_vectorizer import MatrixVectorizer
 import pandas as pd
 
 
@@ -214,31 +214,6 @@ def train_model(
 
     return train_loss_history, val_loss_history, lr_history, best_model_state_dict
 
-
-@torch.no_grad()
-def evaluate_model(model, dataloader):
-    """
-    Runs forward pass, calculates binary predictions (threshold=0.5),
-    and returns the accuracy score.
-    """
-    from metrics import evaluation_metrics
-
-    model.eval()
-
-    preds = []
-    true = []
-    for batch in dataloader:
-        inputs, targets = batch
-        inputs = inputs.squeeze(0)
-        targets = targets.squeeze(0)
-        inputs.to(model.device)
-        outputs, _, _ = model(inputs)
-        preds.append(outputs.detach().cpu().numpy())
-        true.append(targets.detach().cpu().numpy())
-
-    batch_metrics = evaluation_metrics(preds, true)
-
-    return batch_metrics
 
 
 def reconstruct_adjacency(X, threshold=0.2):

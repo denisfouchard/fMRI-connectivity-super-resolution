@@ -37,6 +37,7 @@ def symmetric_normalize(A_tilde):
     return D_inv @ A_tilde @ D_inv
 
 
+
 def batch_normalize(batch):
     batch_n = torch.zeros_like(batch)
     for i, A in enumerate(batch):
@@ -121,10 +122,8 @@ def train_model(
             targets = targets.squeeze(0)
             optimizer.zero_grad()
 
-            X = train_node_features[i] if train_node_features is not None else None
-
             # Forward pass on training data
-            outputs, A_hist, A_recon_hist = model.forward(A=inputs, X=X, skip=skip)
+            outputs, A_hist, A_recon_hist = model.forward(A=inputs, skip=skip)
             loss = criterion(
                 outputs,
                 targets.to(model.device),
@@ -154,8 +153,7 @@ def train_model(
                     inputs = inputs.squeeze(0)
                     targets = targets.to(model.device)
                     targets = targets.squeeze(0)
-                    X = val_node_features[i] if val_node_features is not None else None
-                    outputs, A_hist, A_recon_hist = model(A=inputs, X=X, skip=skip)
+                    outputs, A_hist, A_recon_hist = model(A=inputs,  skip=skip)
 
                     val_loss += criterion(
                         outputs,
@@ -280,7 +278,7 @@ class GraphUpsampler(nn.Module):
 
         # Generate new nodes by transforming existing ones
         X_upsampled = self.upsample_mlp(X.T).T  # [num_nodes, in_dim]
-        X_upsampled = (X_upsampled)
+        X_upsampled = F.softmax(X_upsampled)
         # Concatenate old and new nodes
 
         A_upsampled = reconstruct_adjacency(X=X_upsampled)
@@ -309,8 +307,8 @@ class GraphUnet(nn.Module):
         )
         self.l_n = len(ks)
         for k in ks:
-            #out_dim = int(dim / k)
-            out_dim = dim
+            out_dim = int(dim / k)
+            # out_dim = dim
             self.down_gcns.append(GT(dim, out_dim, act, drop_p, heads))
             self.up_gcns.append(GT(out_dim, dim, act, drop_p, heads))
             self.pools.append(Pool(k, out_dim, drop_p))
@@ -347,15 +345,13 @@ class GraphUnet(nn.Module):
     def forward(
         self, A: torch.Tensor, skip: bool = False, threshold: float = -1, X=None
     ):
-        # Process A
-        if threshold > 0:
-            A = torch.where(A > threshold, A, torch.zeros_like(A))
-        A = A + torch.eye(A.shape[0])
+
+        A_ = A + torch.eye(A.shape[0])
         A = symmetric_normalize(A)
-        A = A.to(self.device)
+        A_ = A_.to(self.device)
 
         if X is None:
-            X = self.build_node_features(A, self.dim).to(self.device)
+            X = self.build_node_features(A_, self.dim).to(self.device)
      
 
         A_history = []
@@ -365,18 +361,18 @@ class GraphUnet(nn.Module):
         if skip:
             org_X = X.clone()
         for i in range(self.l_n):
-            X = self.down_gcns[i](A, X)
-            A_history.append(A)
+            X = self.down_gcns[i](A_, X)
+            A_history.append(A_)
             down_outs.append(X)
-            A, X, idx = self.pools[i](A, X)
+            A_, X, idx = self.pools[i](A_, X)
             indices_list.append(idx)
 
-        X = self.bottom_gcn(A, X)
+        X = self.bottom_gcn(A_, X)
         for i in range(self.l_n):
             up_idx = self.l_n - i - 1
-            A, idx = A_history[up_idx], indices_list[up_idx]
-            A, X = self.unpools[i](A, X, down_outs[up_idx], idx)
-            X = self.up_gcns[i](A, X)
+            A_, idx = A_history[up_idx], indices_list[up_idx]
+            A_, X = self.unpools[i](A_, X, down_outs[up_idx], idx)
+            X = self.up_gcns[i](A_, X)
 
             A_recon = reconstruct_adjacency(X)
             A_recon_history.append(A_recon)
@@ -387,7 +383,7 @@ class GraphUnet(nn.Module):
         if skip:
             X = X.add(org_X)
 
-        A_upsampled = self.upsampler.forward(X, A)
+        A_upsampled = self.upsampler.forward(X, A_)
 
         return A_upsampled, A_history, A_recon_history
 
@@ -452,7 +448,7 @@ def top_k_graph(scores, A, X, k):
     # )  # second power to reduce chance of isolated nodes
     A_pooled = A[idx, :]
     A_pooled = A_pooled[:, idx]
-    #A_pooled = symmetric_normalize(A_pooled)
+    A_pooled = symmetric_normalize(A_pooled)
     return A_pooled, X_pooled, idx
 
 
@@ -544,16 +540,16 @@ if __name__ == "__main__":
         train_subset = Subset(full_dataset, train_idx)
         val_subset = Subset(full_dataset, val_idx)
         
-        train_dataloader = DataLoader(train_subset, batch_size=8, shuffle=True)
-        val_dataloader = DataLoader(val_subset, batch_size=8, shuffle=False)
+        train_dataloader = DataLoader(train_subset, batch_size=1, shuffle=True)
+        val_dataloader = DataLoader(val_subset, batch_size=1, shuffle=False)
         
         model = GraphUnet(
             ks=[0.5, 0.5, 0.5],
             n_nodes=160,
             m_nodes=268,
-            dim=128,
+            dim=16,
             act=torch.relu,
-            drop_p=0.1,
+            drop_p=0.01,
         )
         model.to(torch.device("cuda:2"))
 
@@ -561,19 +557,14 @@ if __name__ == "__main__":
             model=model,
             train_dataloader=train_dataloader,
             val_dataloader=val_dataloader,
-            num_epochs=50,
-            lr=0.001,
+            num_epochs=100,
+            lr=0.01,
             validate_every=1,
-            patience=3,
+            patience=10,
             criterion=loss,
             intermediate_losses=True,
             skip=False,
         )
 
         model.eval()
-        with torch.no_grad():
-            
-        
-
-
-
+  

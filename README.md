@@ -30,7 +30,7 @@ We incorporate multi-scale learning, attention-based message passing, and regula
 
 ## Model Architecture  
 
-![Model Architecture](model-architecture.png)
+![Model Architecture](figures/model-architecture.png)
 
 ## Used External Libraries
 

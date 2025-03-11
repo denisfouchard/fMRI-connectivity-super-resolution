@@ -13,10 +13,9 @@ import torch
 import torch.nn as nn
 import numpy as np
 import networkx as nx
-from slim import SLIMDataModule
+from utils.slim import SLIMDataModule, create_test_dataloader
 import torch.nn as nn
 from sklearn.model_selection import KFold
-from slim import create_test_dataloader
 from torch.utils.data import DataLoader, Subset
 from utils.matrix_vectorizer import MatrixVectorizer
 import pandas as pd

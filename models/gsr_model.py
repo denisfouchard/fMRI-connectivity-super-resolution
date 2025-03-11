@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
-from layers import *
-from ops import *
+from models.layers import *
+from models.ops import *
 from utils.preprocessing import normalize_adj_torch
 import torch.nn.functional as F
 

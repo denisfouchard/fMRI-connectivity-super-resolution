@@ -54,9 +54,7 @@ Our model relies on the following external libraries:
 
 - H. Gao and S. Ji, “Graph u-nets,” in International Conference on Machine
 Learning, 2019, pp. 2083–2092.
-- M. Isallari and I. Rekik, “Graph super-resolution network for predicting
-high-resolution connectomes from low-resolution connectomes,” in International Workshop on PRedictive Intelligence In MEdicine. Springer,
-2020.
+- M. Isallari and I. Rekik, “Graph super-resolution network for predicting high-resolution connectomes from low-resolution connectomes,” in International Workshop on PRedictive Intelligence In MEdicine. Springer, 2020.
 - ——, “Brain graph super-resolution using adversarial graph neural
 network with application to functional brain connectivity,” 2021.
 [Online]. Available: https://arxiv.org/abs/2105.00425

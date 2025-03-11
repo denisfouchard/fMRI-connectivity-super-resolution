@@ -1,5 +1,5 @@
 from sklearn.metrics import mean_squared_error, mean_absolute_error
-from scipy.stats import pearsonr
+from scipy.stats import pearsonr, entropy
 from scipy.spatial.distance import jensenshannon
 import torch
 import networkx as nx
@@ -10,22 +10,55 @@ from tqdm import tqdm
 from utils.matrix_vectorizer import MatrixVectorizer
 
 
-
 def print_metrics(gt_matrices, pred_matrices):
+
+
     # Initialize lists to store MAEs for each centrality measure
     mae_bc = []
     mae_ec = []
     mae_pc = []
-    mae_deg = []  # degree
     mae_cp = []  # Core-Periphery Structure
     pred_1d_list = []
     gt_1d_list = []
+    kl_div_weights = []  # KL divergence for weight distributions
 
     # Iterate over each test sample
     for i in tqdm(range(len(gt_matrices))):
         # Convert adjacency matrices to NetworkX graphs
         pred_graph = nx.from_numpy_array(pred_matrices[i], edge_attr="weight")
         gt_graph = nx.from_numpy_array(gt_matrices[i], edge_attr="weight")
+
+        # Extract weights from the adjacency matrices
+        gt_weights = [data['weight'] for _, _, data in gt_graph.edges(data=True)]
+        pred_weights = [data['weight'] for _, _, data in pred_graph.edges(data=True)]
+        
+        # If there are no edges in either graph, use placeholder values
+        if not gt_weights:
+            gt_weights = [0]
+        if not pred_weights:
+            pred_weights = [0]
+
+        # Create histograms for the weights to get probability distributions
+        bins = 50  # Number of bins for histograms
+        min_val = min(min(gt_weights), min(pred_weights))
+        max_val = max(max(gt_weights), max(pred_weights))
+        
+        # Create histograms with the same bins for both distributions
+        gt_hist, bin_edges = np.histogram(gt_weights, bins=bins, range=(min_val, max_val), density=True)
+        pred_hist, _ = np.histogram(pred_weights, bins=bins, range=(min_val, max_val), density=True)
+        
+        # Add small epsilon to avoid division by zero in KL divergence
+        epsilon = 1e-10
+        gt_hist = gt_hist + epsilon
+        pred_hist = pred_hist + epsilon
+        
+        # Normalize to ensure they are proper probability distributions
+        gt_hist = gt_hist / np.sum(gt_hist)
+        pred_hist = pred_hist / np.sum(pred_hist)
+        
+        # Compute KL divergence between weight distributions
+        kl_div = entropy(gt_hist, pred_hist)
+        kl_div_weights.append(kl_div)
 
         # Compute centrality measures
         pred_bc = nx.betweenness_centrality(pred_graph, weight="weight", k=min(10, len(pred_graph.nodes())))
@@ -36,9 +69,6 @@ def print_metrics(gt_matrices, pred_matrices):
 
         pred_pc = nx.pagerank(pred_graph, weight="weight")
         gt_pc = nx.pagerank(gt_graph, weight="weight")
-
-        pred_deg = pred_graph.degree(weight="weight")
-        gt_deg = gt_graph.degree(weight="weight")
         
         pred_cp = compute_weighted_kcore(pred_graph)
         gt_cp = compute_weighted_kcore(gt_graph)
@@ -60,17 +90,16 @@ def print_metrics(gt_matrices, pred_matrices):
         mae_bc.append(mean_absolute_error(pred_bc_values, gt_bc_values))
         mae_ec.append(mean_absolute_error(pred_ec_values, gt_ec_values))
         mae_pc.append(mean_absolute_error(pred_pc_values, gt_pc_values))
-        mae_deg.append(mean_absolute_error(pred_deg, gt_deg))
         mae_cp.append(mean_absolute_error(pred_cp_values, gt_cp_values))
         pred_1d_list.append(MatrixVectorizer.vectorize(pred_matrices[i]))
         gt_1d_list.append(MatrixVectorizer.vectorize(gt_matrices[i]))
 
-    # Compute average MAEs
+    # Compute average MAEs and KL divergence
     avg_mae_bc = sum(mae_bc) / len(mae_bc)
     avg_mae_ec = sum(mae_ec) / len(mae_ec)
     avg_mae_pc = sum(mae_pc) / len(mae_pc)
-    avg_mae_deg = sum(mae_deg) / len(mae_deg)
     avg_mae_cp = sum(mae_cp) / len(mae_cp)
+    avg_kl_div_weights = sum(kl_div_weights) / len(kl_div_weights)
 
     pred_1d = np.concatenate(pred_1d_list)
     gt_1d = np.concatenate(gt_1d_list)
@@ -83,11 +112,12 @@ def print_metrics(gt_matrices, pred_matrices):
     print("MAE: ", mae)
     print("PCC: ", pcc)
     print("Jensen-Shannon Distance: ", js_dis)
+    print("Average KL Divergence on weight distributions:", avg_kl_div_weights)
     print("Average MAE betweenness centrality:", avg_mae_bc)
     print("Average MAE eigenvector centrality:", avg_mae_ec)
     print("Average MAE PageRank centrality:", avg_mae_pc)
-    print("Average MAE node degree:", avg_mae_deg)
     print("Average MAE core-periphery structure:", avg_mae_cp)
+
 
 def compute_weighted_kcore(graph):
     """
